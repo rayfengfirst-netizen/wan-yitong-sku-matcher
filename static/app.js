@@ -27,9 +27,13 @@
   async function loadJobs() {
     const tbody = $("jobs-body");
     try {
-      const r = await fetch("/api/jobs");
+      const r = await fetch(`/api/jobs?_=${Date.now()}`, {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
       if (!r.ok) throw new Error("列表加载失败");
       const jobs = await r.json();
+      if (!Array.isArray(jobs)) throw new Error("列表格式异常");
       if (!jobs.length) {
         tbody.innerHTML =
           '<tr><td colspan="6" class="muted">暂无记录，完成一次匹配后会出现在这里</td></tr>';
@@ -59,8 +63,14 @@
         btn.addEventListener("click", () => openErrors(btn.getAttribute("data-job-errors")));
       });
     } catch (e) {
+      console.error("loadJobs", e);
       tbody.innerHTML = `<tr><td colspan="6" class="bad">加载失败，请刷新页面重试</td></tr>`;
     }
+  }
+
+  function scrollToJobs() {
+    const el = document.getElementById("section-jobs");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   function escapeHtml(s) {
@@ -83,7 +93,10 @@
     list.innerHTML = '<li class="muted">加载中…</li>';
     panel.classList.remove("hidden");
     try {
-      const r = await fetch(`/api/jobs/${jobId}/errors`);
+      const r = await fetch(`/api/jobs/${jobId}/errors?_=${Date.now()}`, {
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
       if (!r.ok) throw new Error("加载失败");
       const data = await r.json();
       if (!data.errors || !data.errors.length) {
@@ -150,6 +163,7 @@
          <a class="btn link inline" href="${data.download_url}">下载本次结果表</a>${extra}`
       );
       await loadJobs();
+      requestAnimationFrame(() => scrollToJobs());
     } catch (e) {
       setStatus("err", `<strong>网络或服务器异常</strong><br/>${escapeHtml(e.message || String(e))}`);
     } finally {

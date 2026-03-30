@@ -31,6 +31,16 @@ app.include_router(api_router)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+@app.middleware("http")
+async def disable_cache_for_api(request, call_next):
+    """避免 GET /api/* 被浏览器或 CDN 缓存成旧数据（匹配后列表不刷新）。"""
+    response = await call_next(request)
+    if request.url.path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
