@@ -8,16 +8,71 @@
 </head>
 <body>
   <main class="wrap">
-    <h1>万邑通 SKU 匹配</h1>
-    <p class="lead">上传两个表格：账号与简称对照表、SKU 表（功能开发中）。</p>
+    <header class="hero">
+      <h1>万邑通 SKU 匹配</h1>
+      <p class="lead">
+        上传「店铺简称配对关系表」与「SKU 配对表」，按 Custom Label 去简称前缀并清理后缀，生成「匹配 SKU」与「数量」。
+      </p>
+    </header>
+
     <section class="card">
-      <h2>1. 账号与简称对照表</h2>
-      <input type="file" accept=".xlsx,.xls,.csv" disabled />
+      <h2>下载模板</h2>
+      <p class="hint">先按模板填好再上传，可减少列名对不上的问题。</p>
+      <div class="row-btns">
+        <a class="btn secondary" href="/api/templates/shop-mapping">店铺简称配对关系表模板</a>
+        <a class="btn secondary" href="/api/templates/sku-pair">SKU 配对表模板</a>
+      </div>
     </section>
+
     <section class="card">
-      <h2>2. SKU 表</h2>
-      <input type="file" accept=".xlsx,.xls,.csv" disabled />
+      <h2>上传并匹配</h2>
+      <form id="form-match" class="form-grid">
+        <label class="field">
+          <span class="label">店铺简称配对关系表</span>
+          <input id="file-mapping" type="file" accept=".xlsx,.xlsm,.csv" required />
+        </label>
+        <label class="field">
+          <span class="label">SKU 配对表</span>
+          <input id="file-sku" type="file" accept=".xlsx,.xlsm,.csv" required />
+        </label>
+        <div class="form-actions">
+          <button type="submit" id="btn-run" class="btn primary">开始匹配</button>
+          <span id="btn-spinner" class="spinner hidden" aria-hidden="true"></span>
+        </div>
+      </form>
+      <div id="status" class="status hidden" role="status"></div>
+    </section>
+
+    <section class="card">
+      <h2>匹配记录</h2>
+      <p class="hint">可下载每次结果；失败行原因可点「失败明细」查看。</p>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>成功</th>
+              <th>失败</th>
+              <th>配对表</th>
+              <th>SKU 表</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="jobs-body">
+            <tr><td colspan="6" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="panel-errors" class="card panel hidden">
+      <div class="panel-head">
+        <h2 id="panel-errors-title">失败明细</h2>
+        <button type="button" id="btn-close-errors" class="btn ghost">关闭</button>
+      </div>
+      <ul id="errors-list" class="errors-list"></ul>
     </section>
   </main>
+  <script src="/static/app.js" defer></script>
 </body>
 </html>

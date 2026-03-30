@@ -12,6 +12,7 @@
 | 代码目录（建议） | `/opt/wan-yitong-sku-matcher` |
 | 对外端口 | **6578**（`uvicorn --host 0.0.0.0 --port 6578`） |
 | 进程 | systemd：`wan-yitong-sku-matcher.service` |
+| 数据目录 | 项目下 `data/`（SQLite 任务历史、每次匹配结果 xlsx，**勿删**；已写入 `.gitignore`） |
 
 云厂商安全组需放行 **TCP 6578**（若日后改为 Nginx 反代，可改为监听 `127.0.0.1:6578` 并只开放 80/443）。
 
