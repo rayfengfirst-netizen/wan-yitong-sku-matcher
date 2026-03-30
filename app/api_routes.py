@@ -8,6 +8,7 @@ import tempfile
 import uuid
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -22,6 +23,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["api"])
 
 ALLOWED_SUFFIX = {".csv", ".xlsx", ".xlsm"}
+
+
+def _content_disposition(ascii_filename: str, utf8_filename: str) -> str:
+    """
+    HTTP 头只能是 latin-1；中文名用 RFC 5987 filename*（百分号编码），浏览器仍可显示中文。
+    """
+    star = quote(utf8_filename, safe="")
+    return f'attachment; filename="{ascii_filename}"; filename*=UTF-8\'\'{star}'
 
 
 def _suffix(name: str) -> str:
@@ -84,6 +93,7 @@ def api_download(job_id: str, request: Request):
     if not path.is_file():
         logger.error("结果文件缺失 job=%s path=%s", job_id, path)
         raise HTTPException(status_code=404, detail="结果文件不存在")
+    # Starlette 会对非 ASCII 文件名自动使用 filename*=utf-8''（合法 latin-1 响应头）
     return FileResponse(
         path,
         filename=f"SKU匹配结果_{job_id[:8]}.xlsx",
@@ -98,7 +108,10 @@ def tpl_mapping():
         content=body,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": 'attachment; filename="店铺简称配对关系表模板.xlsx"'
+            "Content-Disposition": _content_disposition(
+                "shop-mapping-template.xlsx",
+                "店铺简称配对关系表模板.xlsx",
+            )
         },
     )
 
@@ -109,7 +122,12 @@ def tpl_sku():
     return Response(
         content=body,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": 'attachment; filename="SKU配对表模板.xlsx"'},
+        headers={
+            "Content-Disposition": _content_disposition(
+                "sku-pair-template.xlsx",
+                "SKU配对表模板.xlsx",
+            )
+        },
     )
 
 
