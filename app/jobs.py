@@ -66,8 +66,9 @@ def insert_job(
     result_relpath: str,
     map_warnings: list[str],
     row_errors: list[tuple[int, str]],
-) -> str:
+) -> tuple[str, str]:
     jid = job_id or str(uuid.uuid4())
+    created_at = _utc_now_iso()
     path = db_path(base_dir)
     con = sqlite3.connect(path)
     try:
@@ -80,7 +81,7 @@ def insert_job(
             """,
             (
                 jid,
-                _utc_now_iso(),
+                created_at,
                 mapping_name,
                 sku_name,
                 ok_count,
@@ -104,7 +105,7 @@ def insert_job(
         ok_count,
         fail_count,
     )
-    return jid
+    return jid, created_at
 
 
 def list_jobs(base_dir: Path, limit: int = 100) -> list[dict[str, Any]]:

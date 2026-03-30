@@ -41,6 +41,16 @@ async def disable_cache_for_api(request, call_next):
     return response
 
 
+@app.middleware("http")
+async def short_cache_static_assets(request, call_next):
+    """避免 app.js / styles.css 长期缓存导致用户一直用旧前端逻辑。"""
+    response = await call_next(request)
+    p = request.url.path
+    if p.startswith("/static/") and (p.endswith(".js") or p.endswith(".css")):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index() -> HTMLResponse:
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")

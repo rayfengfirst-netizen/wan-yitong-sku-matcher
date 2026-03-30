@@ -188,6 +188,19 @@ input[type="file"] {
   color: #fde68a;
 }
 
+.status.loading {
+  background: rgba(61, 139, 253, 0.12);
+  border: 1px solid rgba(61, 139, 253, 0.35);
+  color: #c8ddff;
+}
+
+.status .subtle {
+  display: inline-block;
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+  opacity: 0.88;
+}
+
 .status ul {
   margin: 0.35rem 0 0 1.1rem;
   padding: 0;

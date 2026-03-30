@@ -196,11 +196,13 @@ async def api_match(
         write_result_xlsx(result_path, out_headers, out_rows)
         relpath = str(result_path.relative_to(base_dir))
 
-        jobs_store.insert_job(
+        map_name = mapping.filename or "mapping"
+        sku_name = sku.filename or "sku"
+        _, created_at = jobs_store.insert_job(
             base_dir,
             job_id=jid,
-            mapping_name=mapping.filename or "mapping",
-            sku_name=sku.filename or "sku",
+            mapping_name=map_name,
+            sku_name=sku_name,
             ok_count=ok_count,
             fail_count=fail_count,
             row_count=len(out_rows),
@@ -219,6 +221,9 @@ async def api_match(
 
         return {
             "job_id": jid,
+            "created_at": created_at,
+            "mapping_name": map_name,
+            "sku_name": sku_name,
             "ok_count": ok_count,
             "fail_count": fail_count,
             "row_count": len(out_rows),
