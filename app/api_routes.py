@@ -53,11 +53,18 @@ def _template_mapping_bytes() -> bytes:
 
 
 def _template_sku_bytes() -> bytes:
+    """与用户提供的「万邑通SKU和eBay SKU匹配关系」表头一致（仅表头行）。"""
     wb = Workbook()
     ws = wb.active
-    ws.title = "SKU"
-    ws.append(["店铺账号", "Custom Label"])
-    ws.append(["示例科技有限公司", "DEMO-SKU001- A *2"])
+    ws.title = "SKU配对"
+    ws.append(
+        [
+            "店铺账号\nShop Account",
+            "custom Label",
+            "匹配SKU",
+            "数量",
+        ]
+    )
     bio = BytesIO()
     wb.save(bio)
     return bio.getvalue()

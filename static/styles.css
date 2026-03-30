@@ -40,6 +40,12 @@ body {
   font-size: 0.95rem;
 }
 
+.lead .mono {
+  font-family: ui-monospace, monospace;
+  font-size: 0.82em;
+  word-break: break-all;
+}
+
 .card {
   background: var(--surface);
   border-radius: 10px;

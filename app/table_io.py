@@ -13,7 +13,11 @@ logger = logging.getLogger(__name__)
 
 
 def norm_header(name: str) -> str:
-    t = str(name).strip().lower().replace(" ", "").replace("_", "").replace("\u3000", "")
+    t = str(name).strip()
+    # 双语表头常见「中文\\n英文」，列名匹配时只用第一行（中文）部分
+    if "\n" in t or "\r" in t:
+        t = t.replace("\r\n", "\n").replace("\r", "\n").split("\n", 1)[0].strip()
+    t = t.lower().replace(" ", "").replace("_", "").replace("\u3000", "")
     return t
 
 

@@ -19,6 +19,7 @@ MAP_SHORT_ALIASES = ["店铺简称", "简称"]
 SKU_ACCOUNT_ALIASES = ["店铺账号", "店铺全称", "账号", "selleraccount"]
 SKU_LABEL_ALIASES = [
     "Custom Label",
+    "custom Label",
     "custom label",
     "CustomLabel",
     "自定义标签",
