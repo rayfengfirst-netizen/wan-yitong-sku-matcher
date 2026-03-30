@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd /opt/wan-yitong-sku-matcher
+git pull
+source .venv/bin/activate
+pip install -r requirements.txt
+systemctl restart wan-yitong-sku-matcher
+echo "OK: http://127.0.0.1:6578/health"

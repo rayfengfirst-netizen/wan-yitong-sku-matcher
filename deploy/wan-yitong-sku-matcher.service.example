@@ -1,0 +1,23 @@
+# 复制到服务器后：
+#   sudo cp deploy/wan-yitong-sku-matcher.service.example /etc/systemd/system/wan-yitong-sku-matcher.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now wan-yitong-sku-matcher
+#
+# 约定：监听 0.0.0.0:6578（云安全组需放行 TCP 6578）
+
+[Unit]
+Description=Wan Yitong SKU Matcher (FastAPI + Uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/wan-yitong-sku-matcher
+Environment="PATH=/opt/wan-yitong-sku-matcher/.venv/bin"
+ExecStart=/opt/wan-yitong-sku-matcher/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 6578
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
