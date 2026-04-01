@@ -90,9 +90,11 @@ def build_short_map(
 
 
 def strip_dash_letter_suffixes(raw: str) -> str:
-    """去掉末尾形如「 - A」「 - B」的片段（可多次）。"""
+    """去掉末尾形如「 - A」「 - ABCD」的片段（可多次）。"""
     s = raw.rstrip()
-    pat = re.compile(r"\s*-\s*[A-Za-z]\s*$")
+    # 仅去掉像 "- A" / "- ABCD" 这类“短字母标签”后缀；
+    # 要求短码前有分隔空格，避免误删真实 SKU 段（如 LZ-ABC）。
+    pat = re.compile(r"\s*-\s+[A-Za-z]{1,4}\s*$")
     while True:
         ns = pat.sub("", s).rstrip()
         if ns == s:
@@ -172,28 +174,29 @@ def process_sku_table(
     if not col_label:
         raise ValueError("SKU 表缺少「Custom Label」列")
 
+    def normalize_key(v: str) -> str:
+        return str(v).strip().lower()
+
+    # 构建真实 SKU 候选库：按店铺账号分组 + 全局（用于兜底）
+    real_pool_by_account: dict[str, set[str]] = {}
+    real_pool_global: set[str] = set()
+    if col_real:
+        for row in sku_rows:
+            real_val = row.get(col_real)
+            real_sku = str(real_val).strip() if real_val is not None else ""
+            if not real_sku:
+                continue
+            acc_v = row.get(col_acc)
+            acc_s = str(acc_v).strip() if acc_v is not None else ""
+            if acc_s:
+                real_pool_by_account.setdefault(acc_s, set()).add(real_sku)
+            real_pool_global.add(real_sku)
+
     out: list[dict[str, Any]] = []
     for idx, row in enumerate(sku_rows, start=2):
         account = row.get(col_acc)
         label = row.get(col_label)
         base: dict[str, Any] = {k: row.get(k, "") for k in sku_headers}
-
-        # 优先使用真实 SKU（万邑通SKU）作为匹配SKU，避免前后缀规则误伤真实值
-        if col_real:
-            real_val = row.get(col_real)
-            real_sku = str(real_val).strip() if real_val is not None else ""
-            if real_sku:
-                qty = 1
-                if label is not None and str(label).strip():
-                    cleaned = strip_dash_letter_suffixes(str(label).strip())
-                    _, qty = extract_trailing_qty(cleaned)
-                base["匹配SKU"] = real_sku
-                base["数量"] = qty
-                base["匹配状态"] = "成功"
-                base["失败原因"] = ""
-                out.append(base)
-                continue
-
         acc_str = str(account).strip() if account is not None else ""
         if not acc_str:
             base["匹配SKU"] = ""
@@ -210,21 +213,91 @@ def process_sku_table(
             base["失败原因"] = f"配对表中找不到店铺全称/账号「{acc_str}」"
             out.append(base)
             continue
-        mo = MatchOutcome(False, "", 1, "Custom Label 不匹配该店铺任一简称")
+
+        label_str = str(label).strip() if label is not None else ""
+        if not label_str:
+            base["匹配SKU"] = ""
+            base["数量"] = ""
+            base["匹配状态"] = "失败"
+            base["失败原因"] = "Custom Label 为空"
+            out.append(base)
+            continue
+
+        # 数量优先从末尾提取：*2 / (2) 等
+        after_qty, qty = extract_trailing_qty(label_str)
+
+        # 候选1：原样去数量 + 去末尾 -ABCD
+        base_candidate = strip_dash_letter_suffixes(after_qty).strip()
+        candidates: list[str] = []
+        seen_candidates: set[str] = set()
+
+        def add_candidate(v: str) -> None:
+            vv = v.strip()
+            if not vv:
+                return
+            k = normalize_key(vv)
+            if k in seen_candidates:
+                return
+            seen_candidates.add(k)
+            candidates.append(vv)
+
+        add_candidate(base_candidate)
+
+        # 候选2：尝试去掉店铺简称前缀（但保留原样候选，避免 LZ- 与真实 SKU 冲突）
         for short in sorted(short_list, key=len, reverse=True):
-            mo = match_one_row(label, short)
-            if mo.ok:
+            short_clean = short.strip()
+            if not short_clean:
+                continue
+            if base_candidate.startswith(short_clean):
+                rest = base_candidate[len(short_clean) :].lstrip("-_ ")
+                add_candidate(rest)
+
+        # 在真实 SKU 候选库中做精确匹配（先店铺内，再全局兜底）
+        account_pool = real_pool_by_account.get(acc_str, set())
+        account_pool_idx = {normalize_key(x): x for x in account_pool}
+        global_pool_idx = {normalize_key(x): x for x in real_pool_global}
+
+        matched_real = ""
+        for cand in candidates:
+            ck = normalize_key(cand)
+            if ck in account_pool_idx:
+                matched_real = account_pool_idx[ck]
                 break
-        if not mo.ok:
-            mo = MatchOutcome(
-                False,
-                "",
-                1,
-                f"Custom Label 不以该店铺任何简称开头：{', '.join(short_list)}",
-            )
-        base["匹配SKU"] = mo.matched_sku if mo.ok else ""
-        base["数量"] = mo.qty if mo.ok else ""
-        base["匹配状态"] = "成功" if mo.ok else "失败"
-        base["失败原因"] = mo.reason if not mo.ok else ""
+        if not matched_real:
+            for cand in candidates:
+                ck = normalize_key(cand)
+                if ck in global_pool_idx:
+                    matched_real = global_pool_idx[ck]
+                    break
+
+        if matched_real:
+            base["匹配SKU"] = matched_real
+            base["数量"] = qty
+            base["匹配状态"] = "成功"
+            base["失败原因"] = ""
+            out.append(base)
+            continue
+
+        # 若没有真实 SKU 候选库，则退回旧逻辑（直接按前后缀算）
+        if not real_pool_global:
+            mo = MatchOutcome(False, "", 1, "Custom Label 不匹配该店铺任一简称")
+            for short in sorted(short_list, key=len, reverse=True):
+                mo = match_one_row(label_str, short)
+                if mo.ok:
+                    break
+            base["匹配SKU"] = mo.matched_sku if mo.ok else ""
+            base["数量"] = mo.qty if mo.ok else ""
+            base["匹配状态"] = "成功" if mo.ok else "失败"
+            base["失败原因"] = mo.reason if not mo.ok else ""
+            out.append(base)
+            continue
+
+        base["匹配SKU"] = ""
+        base["数量"] = ""
+        base["匹配状态"] = "失败"
+        base["失败原因"] = (
+            "未在万邑通SKU候选库中匹配到真实SKU；"
+            f"候选值={candidates}"
+        )
         out.append(base)
     return out
