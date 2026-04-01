@@ -38,17 +38,29 @@ class MatchOutcome:
 def build_short_map(
     mapping_rows: list[dict[str, Any]],
     map_headers: list[str],
-) -> tuple[dict[str, str], list[str]]:
-    """店铺全称 -> 店铺简称；重复全称后者覆盖，并打日志。"""
+) -> tuple[dict[str, list[str]], list[str]]:
+    """店铺全称 -> 店铺简称列表（支持一店多简称）。"""
     col_full = resolve_column(map_headers, MAP_FULL_ALIASES)
     col_short = resolve_column(map_headers, MAP_SHORT_ALIASES)
     if not col_full or not col_short:
         raise ValueError(
             "配对关系表缺少必需列：需要「店铺全称」（或店铺账号）与「店铺简称」"
         )
-    m: dict[str, str] = {}
+    m: dict[str, list[str]] = {}
     warnings: list[str] = []
-    seen_dup: set[str] = set()
+
+    def split_short_names(raw: str) -> list[str]:
+        parts = re.split(r"[,\|/，、；;]+", raw)
+        out: list[str] = []
+        seen: set[str] = set()
+        for p in parts:
+            v = str(p).strip()
+            if not v or v in seen:
+                continue
+            seen.add(v)
+            out.append(v)
+        return out
+
     for i, row in enumerate(mapping_rows, start=2):
         full = row.get(col_full)
         short = row.get(col_short)
@@ -57,14 +69,22 @@ def build_short_map(
         if short is None or str(short).strip() == "":
             continue
         fk = str(full).strip()
-        sk = str(short).strip()
-        if fk in m and fk not in seen_dup:
-            warnings.append(f"配对表第{i}行：店铺全称「{fk}」重复，已使用后出现的简称「{sk}」")
-            seen_dup.add(fk)
-        m[fk] = sk
+        names = split_short_names(str(short))
+        if not names:
+            continue
+        if fk not in m:
+            m[fk] = []
+        before = len(m[fk])
+        for sk in names:
+            if sk not in m[fk]:
+                m[fk].append(sk)
+        if len(m[fk]) > before:
+            warnings.append(
+                f"配对表第{i}行：店铺「{fk}」新增简称 {names}，当前共 {len(m[fk])} 个简称"
+            )
     if not m:
         raise ValueError("配对关系表没有有效数据行")
-    logger.info("配对表加载: %s 条 全称->简称", len(m))
+    logger.info("配对表加载: %s 条 店铺映射（含一店多简称）", len(m))
     return m, warnings
 
 
@@ -140,7 +160,7 @@ def match_one_row(
 def process_sku_table(
     sku_headers: list[str],
     sku_rows: list[dict[str, Any]],
-    full_to_short: dict[str, str],
+    full_to_shorts: dict[str, list[str]],
 ) -> list[dict[str, Any]]:
     """返回输出行：原列 + 匹配SKU + 数量 + 匹配状态 + 失败原因。"""
     col_acc = resolve_column(sku_headers, SKU_ACCOUNT_ALIASES)
@@ -163,15 +183,26 @@ def process_sku_table(
             base["失败原因"] = "店铺账号为空"
             out.append(base)
             continue
-        short = full_to_short.get(acc_str)
-        if short is None:
+        short_list = full_to_shorts.get(acc_str)
+        if not short_list:
             base["匹配SKU"] = ""
             base["数量"] = ""
             base["匹配状态"] = "失败"
             base["失败原因"] = f"配对表中找不到店铺全称/账号「{acc_str}」"
             out.append(base)
             continue
-        mo = match_one_row(label, short)
+        mo = MatchOutcome(False, "", 1, "Custom Label 不匹配该店铺任一简称")
+        for short in sorted(short_list, key=len, reverse=True):
+            mo = match_one_row(label, short)
+            if mo.ok:
+                break
+        if not mo.ok:
+            mo = MatchOutcome(
+                False,
+                "",
+                1,
+                f"Custom Label 不以该店铺任何简称开头：{', '.join(short_list)}",
+            )
         base["匹配SKU"] = mo.matched_sku if mo.ok else ""
         base["数量"] = mo.qty if mo.ok else ""
         base["匹配状态"] = "成功" if mo.ok else "失败"

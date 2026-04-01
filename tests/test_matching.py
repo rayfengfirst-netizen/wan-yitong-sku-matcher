@@ -1,6 +1,12 @@
 """配对规则单元测试。"""
 
-from app.matching import match_one_row, process_after_prefix, strip_dash_letter_suffixes
+from app.matching import (
+    build_short_map,
+    match_one_row,
+    process_after_prefix,
+    process_sku_table,
+    strip_dash_letter_suffixes,
+)
 
 
 def test_strip_dash_letters():
@@ -29,3 +35,27 @@ def test_match_one_row_no_prefix():
     mo = match_one_row("OTHER-SKU", "DEMO")
     assert not mo.ok
     assert "不以店铺简称" in mo.reason
+
+
+def test_multi_short_names_for_one_shop():
+    map_headers = ["店铺全称", "店铺简称"]
+    map_rows = [
+        {"店铺全称": "A店", "店铺简称": "AAA"},
+        {"店铺全称": "A店", "店铺简称": "A1"},
+    ]
+    full_to_shorts, _ = build_short_map(map_rows, map_headers)
+    assert full_to_shorts["A店"] == ["AAA", "A1"]
+
+    sku_headers = ["店铺账号", "custom Label"]
+    sku_rows = [{"店铺账号": "A店", "custom Label": "A1-SKU123(3)"}]
+    out = process_sku_table(sku_headers, sku_rows, full_to_shorts)
+    assert out[0]["匹配状态"] == "成功"
+    assert out[0]["匹配SKU"] == "SKU123"
+    assert out[0]["数量"] == 3
+
+
+def test_multi_short_names_split_in_one_cell():
+    map_headers = ["店铺全称", "店铺简称"]
+    map_rows = [{"店铺全称": "B店", "店铺简称": "BBB, B2 / B-ALT"}]
+    full_to_shorts, _ = build_short_map(map_rows, map_headers)
+    assert full_to_shorts["B店"] == ["BBB", "B2", "B-ALT"]
