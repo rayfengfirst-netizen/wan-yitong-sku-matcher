@@ -1,4 +1,4 @@
-"""SKU 配对：去简称前缀 + 后缀清理 + 数量提取。"""
+"""SKU逆向还原：标准化 + 候选生成 + 唯一精确命中。"""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ class MatchOutcome:
 def build_short_map(
     mapping_rows: list[dict[str, Any]],
     map_headers: list[str],
-) -> tuple[dict[str, list[str]], list[str]]:
+) -> tuple[dict[str, set[str]], list[str]]:
     """店铺全称 -> 店铺简称列表（支持一店多简称）。"""
     col_full = resolve_column(map_headers, MAP_FULL_ALIASES)
     col_short = resolve_column(map_headers, MAP_SHORT_ALIASES)
@@ -47,7 +47,7 @@ def build_short_map(
         raise ValueError(
             "配对关系表缺少必需列：需要「店铺全称」（或店铺账号）与「店铺简称」"
         )
-    m: dict[str, list[str]] = {}
+    m: dict[str, set[str]] = {}
     warnings: list[str] = []
 
     def split_short_names(raw: str) -> list[str]:
@@ -74,11 +74,10 @@ def build_short_map(
         if not names:
             continue
         if fk not in m:
-            m[fk] = []
+            m[fk] = set()
         before = len(m[fk])
         for sk in names:
-            if sk not in m[fk]:
-                m[fk].append(sk)
+            m[fk].add(sk)
         if len(m[fk]) > before:
             warnings.append(
                 f"配对表第{i}行：店铺「{fk}」新增简称 {names}，当前共 {len(m[fk])} 个简称"
@@ -89,96 +88,78 @@ def build_short_map(
     return m, warnings
 
 
-def strip_dash_letter_suffixes(raw: str) -> str:
-    """去掉末尾形如「 - A」「 - ABCD」的片段（可多次）。"""
+def strip_batch_suffix(raw: str) -> str:
+    """去掉刊登批次后缀：-A/-B/_A（仅末尾1位字母）。"""
     s = raw.rstrip()
-    # 仅去掉像 "- A" / "- ABCD" 这类“短字母标签”后缀；
-    # 要求短码前有分隔空格，避免误删真实 SKU 段（如 LZ-ABC）。
-    pat = re.compile(r"\s*-\s+[A-Za-z]{1,4}\s*$")
-    while True:
-        ns = pat.sub("", s).rstrip()
-        if ns == s:
-            return s
-        s = ns
+    return re.sub(r"[-_]\s*[A-Za-z]\s*$", "", s).strip()
 
 
-def extract_trailing_qty(s: str) -> tuple[str, int]:
-    """
-    去掉末尾 *数字 或 (数字)，并返回数量；无则数量为 1。
-    只处理串在**最右端**的一段。
-    """
-    s = s.rstrip()
-    qty = 1
-    # (2) (3)
-    m = re.search(r"\(\s*(\d+)\s*\)\s*$", s)
-    if m:
-        qty = int(m.group(1))
-        s = s[: m.start()].rstrip()
-        return s, qty
-    # *2 *3（允许前面无空格）
-    m = re.search(r"\*\s*(\d+)\s*$", s)
-    if m:
-        qty = int(m.group(1))
-        s = s[: m.start()].rstrip()
-        return s, qty
-    return s, 1
+def parse_qty(label: str) -> int:
+    """提取数量，默认1。仅当能明确提取到单一数字时生效。"""
+    tokens = re.findall(r"\*\s*(\d+)|[\(（]\s*(\d+)\s*[\)）]", label)
+    nums = []
+    for a, b in tokens:
+        n = a or b
+        if n:
+            nums.append(int(n))
+    if not nums:
+        return 1
+    uniq = sorted(set(nums))
+    if len(uniq) == 1:
+        return uniq[0]
+    # 出现多个不同数字，不做激进猜测
+    return 1
 
 
-def strip_terminal_dash_single_letter(raw: str) -> str:
-    """去掉末尾单字母段，如 SKU-...-G -> SKU-...。"""
-    return re.sub(r"\s*-\s*([A-Za-z])\s*$", "", raw).strip()
-
-
-def strip_embedded_qty_tokens(raw: str) -> str:
-    """去掉任意位置的数量标记，如 (2)、( 3 )、*2、* 4。"""
-    s = re.sub(r"\(\s*\d+\s*\)", "", raw)
-    s = re.sub(r"\*\s*\d+", "", s)
+def strip_qty_tokens(raw: str) -> str:
+    """去掉任意位置数量标记：*2/(2)/（2）。"""
+    s = re.sub(r"\*\s*\d+", "", raw)
+    s = re.sub(r"[\(（]\s*\d+\s*[\)）]", "", s)
     s = re.sub(r"\s{2,}", " ", s)
     return s.strip()
 
 
-def process_after_prefix(remainder: str) -> tuple[str, int]:
-    """先做 2.1 去字母后缀，再做 2.2 数量后缀（文档顺序）。"""
-    s = strip_dash_letter_suffixes(remainder)
-    s, qty = extract_trailing_qty(s)
-    s = strip_dash_letter_suffixes(s)
-    s = s.strip()
-    return s, qty
+def normalize_key(v: str) -> str:
+    return str(v).strip().lower()
 
 
-def match_one_row(
-    custom_label: str,
-    short_name: str,
-) -> MatchOutcome:
-    label = str(custom_label).strip()
-    short = str(short_name).strip()
-    if not label:
-        return MatchOutcome(False, "", 1, "Custom Label 为空")
-    if not short:
-        return MatchOutcome(False, "", 1, "店铺简称为空")
-    if not label.startswith(short):
-        return MatchOutcome(
-            False,
-            "",
-            1,
-            f"Custom Label 不以店铺简称「{short}」开头，无法去前缀",
-        )
-    rest = label[len(short) :]
-    rest = rest.lstrip("-_ ")
-    if not rest:
-        return MatchOutcome(False, "", 1, "去掉店铺简称后没有剩余 SKU 内容")
-    matched, qty = process_after_prefix(rest)
-    if not matched:
-        return MatchOutcome(False, "", qty, "后缀处理后 SKU 为空")
-    return MatchOutcome(True, matched, qty, "")
+def generate_candidates(label: str, shop_prefixes: set[str]) -> list[str]:
+    """保守候选生成：原样分支 + 去数量 + 去批次后缀 + 去店铺前缀分支。"""
+    cand: list[str] = []
+    seen: set[str] = set()
+
+    def add(v: str) -> None:
+        vv = str(v).strip()
+        if not vv:
+            return
+        k = normalize_key(vv)
+        if k in seen:
+            return
+        seen.add(k)
+        cand.append(vv)
+
+    base = label.strip()
+    add(base)
+    no_qty = strip_qty_tokens(base)
+    add(no_qty)
+    no_batch = strip_batch_suffix(no_qty)
+    add(no_batch)
+
+    for p in sorted((x.strip() for x in shop_prefixes if x and str(x).strip()), key=len, reverse=True):
+        if base.startswith(p):
+            rest = base[len(p) :].lstrip("-_ ")
+            add(rest)
+            add(strip_qty_tokens(rest))
+            add(strip_batch_suffix(strip_qty_tokens(rest)))
+    return cand
 
 
 def process_sku_table(
     sku_headers: list[str],
     sku_rows: list[dict[str, Any]],
-    full_to_shorts: dict[str, list[str]],
+    full_to_shorts: dict[str, set[str]],
 ) -> list[dict[str, Any]]:
-    """返回输出行：原列 + 匹配SKU + 数量 + 匹配状态 + 失败原因。"""
+    """返回输出行：只在唯一高置信精确命中时写入匹配SKU。"""
     col_acc = resolve_column(sku_headers, SKU_ACCOUNT_ALIASES)
     col_label = resolve_column(sku_headers, SKU_LABEL_ALIASES)
     col_real = resolve_column(sku_headers, SKU_REAL_ALIASES)
@@ -187,23 +168,21 @@ def process_sku_table(
     if not col_label:
         raise ValueError("SKU 表缺少「Custom Label」列")
 
-    def normalize_key(v: str) -> str:
-        return str(v).strip().lower()
-
-    # 构建真实 SKU 候选库：按店铺账号分组 + 全局（用于兜底）
-    real_pool_by_account: dict[str, set[str]] = {}
-    real_pool_global: set[str] = set()
+    # 构建真实 SKU 候选库（同店铺 + 全局）；索引值保留原文，key用lower精确匹配
+    real_pool_by_account: dict[str, dict[str, set[str]]] = {}
+    real_pool_global: dict[str, set[str]] = {}
     if col_real:
         for row in sku_rows:
             real_val = row.get(col_real)
             real_sku = str(real_val).strip() if real_val is not None else ""
             if not real_sku:
                 continue
+            rk = normalize_key(real_sku)
             acc_v = row.get(col_acc)
             acc_s = str(acc_v).strip() if acc_v is not None else ""
             if acc_s:
-                real_pool_by_account.setdefault(acc_s, set()).add(real_sku)
-            real_pool_global.add(real_sku)
+                real_pool_by_account.setdefault(acc_s, {}).setdefault(rk, set()).add(real_sku)
+            real_pool_global.setdefault(rk, set()).add(real_sku)
 
     out: list[dict[str, Any]] = []
     for idx, row in enumerate(sku_rows, start=2):
@@ -216,6 +195,7 @@ def process_sku_table(
             base["数量"] = ""
             base["匹配状态"] = "失败"
             base["失败原因"] = "店铺账号为空"
+            base["匹配审计"] = "NO_ACCOUNT"
             out.append(base)
             continue
         short_list = full_to_shorts.get(acc_str)
@@ -224,6 +204,7 @@ def process_sku_table(
             base["数量"] = ""
             base["匹配状态"] = "失败"
             base["失败原因"] = f"配对表中找不到店铺全称/账号「{acc_str}」"
+            base["匹配审计"] = "NO_SHOP_PREFIX"
             out.append(base)
             continue
 
@@ -233,90 +214,48 @@ def process_sku_table(
             base["数量"] = ""
             base["匹配状态"] = "失败"
             base["失败原因"] = "Custom Label 为空"
+            base["匹配审计"] = "EMPTY_LABEL"
             out.append(base)
             continue
 
-        # 数量优先从末尾提取：*2 / (2) 等
-        after_qty, qty = extract_trailing_qty(label_str)
+        qty = parse_qty(label_str)
+        candidates = generate_candidates(label_str, short_list)
+        pool_acc = real_pool_by_account.get(acc_str, {})
 
-        # 候选1：原样去数量 + 去末尾 -ABCD
-        base_candidate = strip_dash_letter_suffixes(after_qty).strip()
-        candidates: list[str] = []
-        seen_candidates: set[str] = set()
+        # 只接受“唯一精确命中”
+        hit_values: set[str] = set()
+        hit_from_acc = False
+        for c in candidates:
+            ck = normalize_key(c)
+            vals = pool_acc.get(ck)
+            if vals:
+                hit_values.update(vals)
+                hit_from_acc = True
+            else:
+                gvals = real_pool_global.get(ck)
+                if gvals:
+                    hit_values.update(gvals)
 
-        def add_candidate(v: str) -> None:
-            vv = v.strip()
-            if not vv:
-                return
-            k = normalize_key(vv)
-            if k in seen_candidates:
-                return
-            seen_candidates.add(k)
-            candidates.append(vv)
-
-        add_candidate(base_candidate)
-        add_candidate(strip_terminal_dash_single_letter(base_candidate))
-        add_candidate(strip_embedded_qty_tokens(base_candidate))
-        add_candidate(strip_terminal_dash_single_letter(strip_embedded_qty_tokens(base_candidate)))
-
-        # 候选2：尝试去掉店铺简称前缀（但保留原样候选，避免 LZ- 与真实 SKU 冲突）
-        for short in sorted(short_list, key=len, reverse=True):
-            short_clean = short.strip()
-            if not short_clean:
-                continue
-            if base_candidate.startswith(short_clean):
-                rest = base_candidate[len(short_clean) :].lstrip("-_ ")
-                add_candidate(rest)
-                add_candidate(strip_terminal_dash_single_letter(rest))
-                add_candidate(strip_embedded_qty_tokens(rest))
-                add_candidate(strip_terminal_dash_single_letter(strip_embedded_qty_tokens(rest)))
-
-        # 在真实 SKU 候选库中做精确匹配（先店铺内，再全局兜底）
-        account_pool = real_pool_by_account.get(acc_str, set())
-        account_pool_idx = {normalize_key(x): x for x in account_pool}
-        global_pool_idx = {normalize_key(x): x for x in real_pool_global}
-
-        matched_real = ""
-        for cand in candidates:
-            ck = normalize_key(cand)
-            if ck in account_pool_idx:
-                matched_real = account_pool_idx[ck]
-                break
-        if not matched_real:
-            for cand in candidates:
-                ck = normalize_key(cand)
-                if ck in global_pool_idx:
-                    matched_real = global_pool_idx[ck]
-                    break
-
-        if matched_real:
-            base["匹配SKU"] = matched_real
+        if len(hit_values) == 1:
+            base["匹配SKU"] = next(iter(hit_values))
             base["数量"] = qty
             base["匹配状态"] = "成功"
             base["失败原因"] = ""
-            out.append(base)
-            continue
-
-        # 若没有真实 SKU 候选库，则退回旧逻辑（直接按前后缀算）
-        if not real_pool_global:
-            mo = MatchOutcome(False, "", 1, "Custom Label 不匹配该店铺任一简称")
-            for short in sorted(short_list, key=len, reverse=True):
-                mo = match_one_row(label_str, short)
-                if mo.ok:
-                    break
-            base["匹配SKU"] = mo.matched_sku if mo.ok else ""
-            base["数量"] = mo.qty if mo.ok else ""
-            base["匹配状态"] = "成功" if mo.ok else "失败"
-            base["失败原因"] = mo.reason if not mo.ok else ""
+            base["匹配审计"] = (
+                f"UNIQUE_EXACT;scope={'ACCOUNT' if hit_from_acc else 'GLOBAL'};"
+                f"candidates={candidates[:8]}"
+            )
             out.append(base)
             continue
 
         base["匹配SKU"] = ""
         base["数量"] = ""
         base["匹配状态"] = "失败"
-        base["失败原因"] = (
-            "未在万邑通SKU候选库中匹配到真实SKU；"
-            f"候选值={candidates}"
-        )
+        if len(hit_values) > 1:
+            base["失败原因"] = f"命中多个真实SKU，存在歧义：{sorted(hit_values)[:6]}"
+            base["匹配审计"] = f"AMBIGUOUS;hits={len(hit_values)};candidates={candidates[:8]}"
+        else:
+            base["失败原因"] = f"未在万邑通SKU候选库中匹配到真实SKU；候选值={candidates}"
+            base["匹配审计"] = f"NO_HIT;candidates={candidates[:8]}"
         out.append(base)
     return out

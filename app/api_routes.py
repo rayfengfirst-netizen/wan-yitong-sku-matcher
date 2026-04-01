@@ -179,7 +179,7 @@ async def api_match(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
 
-        extra_cols = ["匹配SKU", "数量", "匹配状态", "失败原因"]
+        extra_cols = ["匹配SKU", "数量", "匹配状态", "失败原因", "匹配审计"]
         out_headers = list(sku_headers) + [c for c in extra_cols if c not in sku_headers]
 
         ok_count = sum(1 for r in out_rows if r.get("匹配状态") == "成功")
