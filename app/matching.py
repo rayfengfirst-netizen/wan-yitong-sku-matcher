@@ -124,6 +124,11 @@ def extract_trailing_qty(s: str) -> tuple[str, int]:
     return s, 1
 
 
+def strip_terminal_dash_single_letter(raw: str) -> str:
+    """去掉末尾单字母段，如 SKU-...-G -> SKU-...。"""
+    return re.sub(r"\s*-\s*([A-Za-z])\s*$", "", raw).strip()
+
+
 def process_after_prefix(remainder: str) -> tuple[str, int]:
     """先做 2.1 去字母后缀，再做 2.2 数量后缀（文档顺序）。"""
     s = strip_dash_letter_suffixes(remainder)
@@ -242,6 +247,7 @@ def process_sku_table(
             candidates.append(vv)
 
         add_candidate(base_candidate)
+        add_candidate(strip_terminal_dash_single_letter(base_candidate))
 
         # 候选2：尝试去掉店铺简称前缀（但保留原样候选，避免 LZ- 与真实 SKU 冲突）
         for short in sorted(short_list, key=len, reverse=True):
@@ -251,6 +257,7 @@ def process_sku_table(
             if base_candidate.startswith(short_clean):
                 rest = base_candidate[len(short_clean) :].lstrip("-_ ")
                 add_candidate(rest)
+                add_candidate(strip_terminal_dash_single_letter(rest))
 
         # 在真实 SKU 候选库中做精确匹配（先店铺内，再全局兜底）
         account_pool = real_pool_by_account.get(acc_str, set())

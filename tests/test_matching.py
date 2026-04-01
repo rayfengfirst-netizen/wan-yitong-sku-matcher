@@ -84,3 +84,22 @@ def test_real_winit_sku_pool_match_with_prefix_conflict():
     assert out[3]["匹配状态"] == "成功"
     assert out[3]["匹配SKU"] == "REAL-001"
     assert out[3]["数量"] == 3
+
+
+def test_match_by_stripping_terminal_single_letter_segment():
+    map_headers = ["店铺全称", "店铺简称"]
+    map_rows = [{"店铺全称": "12-yeeranterpart", "店铺简称": "ye"}]
+    full_to_shorts, _ = build_short_map(map_rows, map_headers)
+
+    sku_headers = ["店铺账号", "custom Label", "万邑通SKU"]
+    sku_rows = [
+        {"店铺账号": "12-yeeranterpart", "custom Label": "seed", "万邑通SKU": "Home-WasherArm-5304518927"},
+        {
+            "店铺账号": "12-yeeranterpart",
+            "custom Label": "ye-Home-WasherArm-5304518927-G",
+            "万邑通SKU": "",
+        },
+    ]
+    out = process_sku_table(sku_headers, sku_rows, full_to_shorts)
+    assert out[1]["匹配状态"] == "成功"
+    assert out[1]["匹配SKU"] == "Home-WasherArm-5304518927"
