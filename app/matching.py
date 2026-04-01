@@ -129,6 +129,14 @@ def strip_terminal_dash_single_letter(raw: str) -> str:
     return re.sub(r"\s*-\s*([A-Za-z])\s*$", "", raw).strip()
 
 
+def strip_embedded_qty_tokens(raw: str) -> str:
+    """去掉任意位置的数量标记，如 (2)、( 3 )、*2、* 4。"""
+    s = re.sub(r"\(\s*\d+\s*\)", "", raw)
+    s = re.sub(r"\*\s*\d+", "", s)
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip()
+
+
 def process_after_prefix(remainder: str) -> tuple[str, int]:
     """先做 2.1 去字母后缀，再做 2.2 数量后缀（文档顺序）。"""
     s = strip_dash_letter_suffixes(remainder)
@@ -248,6 +256,8 @@ def process_sku_table(
 
         add_candidate(base_candidate)
         add_candidate(strip_terminal_dash_single_letter(base_candidate))
+        add_candidate(strip_embedded_qty_tokens(base_candidate))
+        add_candidate(strip_terminal_dash_single_letter(strip_embedded_qty_tokens(base_candidate)))
 
         # 候选2：尝试去掉店铺简称前缀（但保留原样候选，避免 LZ- 与真实 SKU 冲突）
         for short in sorted(short_list, key=len, reverse=True):
@@ -258,6 +268,8 @@ def process_sku_table(
                 rest = base_candidate[len(short_clean) :].lstrip("-_ ")
                 add_candidate(rest)
                 add_candidate(strip_terminal_dash_single_letter(rest))
+                add_candidate(strip_embedded_qty_tokens(rest))
+                add_candidate(strip_terminal_dash_single_letter(strip_embedded_qty_tokens(rest)))
 
         # 在真实 SKU 候选库中做精确匹配（先店铺内，再全局兜底）
         account_pool = real_pool_by_account.get(acc_str, set())

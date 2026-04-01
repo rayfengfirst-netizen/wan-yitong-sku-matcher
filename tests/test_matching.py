@@ -103,3 +103,18 @@ def test_match_by_stripping_terminal_single_letter_segment():
     out = process_sku_table(sku_headers, sku_rows, full_to_shorts)
     assert out[1]["匹配状态"] == "成功"
     assert out[1]["匹配SKU"] == "Home-WasherArm-5304518927"
+
+
+def test_match_by_removing_embedded_parenthesized_qty():
+    map_headers = ["店铺全称", "店铺简称"]
+    map_rows = [{"店铺全称": "11 - LiiQuiiPart", "店铺简称": "Li"}]
+    full_to_shorts, _ = build_short_map(map_rows, map_headers)
+
+    sku_headers = ["店铺账号", "custom Label", "万邑通SKU"]
+    sku_rows = [
+        {"店铺账号": "11 - LiiQuiiPart", "custom Label": "seed", "万邑通SKU": "Clamp-10294"},
+        {"店铺账号": "11 - LiiQuiiPart", "custom Label": "Li-Clamp-10294(2)-E", "万邑通SKU": ""},
+    ]
+    out = process_sku_table(sku_headers, sku_rows, full_to_shorts)
+    assert out[1]["匹配状态"] == "成功"
+    assert out[1]["匹配SKU"] == "Clamp-10294"
