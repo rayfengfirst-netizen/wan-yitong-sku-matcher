@@ -63,6 +63,7 @@ def _template_sku_bytes() -> bytes:
             "custom Label",
             "匹配SKU",
             "数量",
+            "万邑通SKU",
         ]
     )
     bio = BytesIO()

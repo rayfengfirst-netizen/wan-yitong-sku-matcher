@@ -25,6 +25,7 @@ SKU_LABEL_ALIASES = [
     "自定义标签",
     "customlabel",
 ]
+SKU_REAL_ALIASES = ["万邑通SKU", "万邑通 sku", "winit sku", "真实SKU", "真实sku"]
 
 
 @dataclass
@@ -165,6 +166,7 @@ def process_sku_table(
     """返回输出行：原列 + 匹配SKU + 数量 + 匹配状态 + 失败原因。"""
     col_acc = resolve_column(sku_headers, SKU_ACCOUNT_ALIASES)
     col_label = resolve_column(sku_headers, SKU_LABEL_ALIASES)
+    col_real = resolve_column(sku_headers, SKU_REAL_ALIASES)
     if not col_acc:
         raise ValueError("SKU 表缺少「店铺账号」列（或与全称对应的列）")
     if not col_label:
@@ -175,6 +177,23 @@ def process_sku_table(
         account = row.get(col_acc)
         label = row.get(col_label)
         base: dict[str, Any] = {k: row.get(k, "") for k in sku_headers}
+
+        # 优先使用真实 SKU（万邑通SKU）作为匹配SKU，避免前后缀规则误伤真实值
+        if col_real:
+            real_val = row.get(col_real)
+            real_sku = str(real_val).strip() if real_val is not None else ""
+            if real_sku:
+                qty = 1
+                if label is not None and str(label).strip():
+                    cleaned = strip_dash_letter_suffixes(str(label).strip())
+                    _, qty = extract_trailing_qty(cleaned)
+                base["匹配SKU"] = real_sku
+                base["数量"] = qty
+                base["匹配状态"] = "成功"
+                base["失败原因"] = ""
+                out.append(base)
+                continue
+
         acc_str = str(account).strip() if account is not None else ""
         if not acc_str:
             base["匹配SKU"] = ""
