@@ -3,8 +3,10 @@
 from app.matching import (
     build_short_map,
     generate_candidates,
+    normalize_real_sku,
     parse_qty,
     process_sku_table,
+    safe_fraction_equivalents,
     strip_batch_suffix,
 )
 
@@ -27,6 +29,15 @@ def test_generate_candidates_keep_both_prefix_branches():
     assert "LZ-ABC(2)-E" in c
     assert "LZ-ABC" in c
     assert "ABC" in c
+
+
+def test_fraction_equivalents():
+    out = safe_fraction_equivalents("AUTOTOOL-SwivelHose-0.75 inch")
+    assert "AUTOTOOL-SwivelHose-3/4 inch" in out
+
+
+def test_real_sku_normalize_dedup():
+    assert normalize_real_sku("Coil_A411001620") == normalize_real_sku("COIL-A411001620")
 
 
 def test_multi_short_names_for_one_shop():
@@ -101,3 +112,17 @@ def test_match_by_removing_embedded_parenthesized_qty():
     out = process_sku_table(sku_headers, sku_rows, full_to_shorts)
     assert out[1]["匹配状态"] == "成功"
     assert out[1]["匹配SKU"] == "Clamp-10294"
+
+
+def test_high_risk_home_hit_blocked():
+    map_headers = ["店铺全称", "店铺简称"]
+    map_rows = [{"店铺全称": "12-yeeranterpart", "店铺简称": "ye"}]
+    full_to_shorts, _ = build_short_map(map_rows, map_headers)
+    sku_headers = ["店铺账号", "custom Label", "万邑通SKU"]
+    sku_rows = [
+        {"店铺账号": "12-yeeranterpart", "custom Label": "seed", "万邑通SKU": "Home-Light-W11042554"},
+        {"店铺账号": "12-yeeranterpart", "custom Label": "ye-Home-Light-W11042554-C", "万邑通SKU": ""},
+    ]
+    out = process_sku_table(sku_headers, sku_rows, full_to_shorts)
+    assert out[1]["匹配状态"] == "失败"
+    assert "高风险" in out[1]["失败原因"]

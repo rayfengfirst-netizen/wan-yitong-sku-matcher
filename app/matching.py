@@ -123,6 +123,76 @@ def normalize_key(v: str) -> str:
     return str(v).strip().lower()
 
 
+def normalize_separators(s: str) -> str:
+    s = str(s)
+    s = s.replace("—", "-").replace("–", "-").replace("_", "-")
+    s = re.sub(r"\s*-\s*", "-", s)
+    s = re.sub(r"\s{2,}", " ", s).strip()
+    return s
+
+
+def normalize_shop_prefix_token(prefix: str) -> str:
+    p = normalize_separators(prefix).strip()
+    p = p.rstrip("-")
+    return p
+
+
+def clean_label_prefix_noise(label: str, shop_prefixes: set[str]) -> str:
+    """仅清洗已知脏前缀模式，不做泛化猜测。"""
+    s = normalize_separators(label)
+    prefixes = sorted(
+        {normalize_shop_prefix_token(x) for x in shop_prefixes if str(x).strip()},
+        key=len,
+        reverse=True,
+    )
+    for p in prefixes:
+        if not p:
+            continue
+        # aBR-xxx -> BR-xxx
+        s = re.sub(rf"^a{re.escape(p)}-", f"{p}-", s, flags=re.I)
+        # Z P-xxx -> ZP-xxx
+        spaced = "-".join(list(p))
+        s = re.sub(rf"^{re.escape(spaced)}-", f"{p}-", s, flags=re.I)
+        # 重复前缀：LZLZ-xxx -> LZ-xxx
+        s = re.sub(rf"^(?:{re.escape(p)}){{2,}}-", f"{p}-", s, flags=re.I)
+    return s
+
+
+def safe_fraction_equivalents(s: str) -> set[str]:
+    """仅支持明确、安全的英寸写法等价。"""
+    pairs = [
+        (r"0\.75\s*inch", "3/4 inch"),
+        (r"3/4\s*inch", "0.75 inch"),
+        (r"0\.5\s*inch", "1/2 inch"),
+        (r"1/2\s*inch", "0.5 inch"),
+        (r"0\.25\s*inch", "1/4 inch"),
+        (r"1/4\s*inch", "0.25 inch"),
+    ]
+    out: set[str] = set()
+    for pat, repl in pairs:
+        if re.search(pat, s, flags=re.I):
+            out.add(re.sub(pat, repl, s, flags=re.I))
+    return {normalize_separators(x) for x in out}
+
+
+def normalize_real_sku(v: str) -> str:
+    return normalize_separators(v).lower()
+
+
+def is_high_risk_hit(hit: str) -> bool:
+    h = normalize_separators(hit).upper()
+    words = ["HOME", "LIGHT", "WASHERARM", "MOUNTING BRACKET"]
+    if h.startswith("HOME-") and re.search(r"[A-Z]{3,}-\d", h) is None:
+        return True
+    score = sum(1 for w in words if w in h)
+    if score >= 2:
+        return True
+    # 过于“自然语言串”，且缺少明显内部编码段
+    if re.search(r"[A-Z]{2,}\d{2,}", h) is None and h.count("-") >= 2 and len(h) >= 18:
+        return True
+    return False
+
+
 def generate_candidates(label: str, shop_prefixes: set[str]) -> list[str]:
     """保守候选生成：原样分支 + 去数量 + 去批次后缀 + 去店铺前缀分支。"""
     cand: list[str] = []
@@ -138,19 +208,29 @@ def generate_candidates(label: str, shop_prefixes: set[str]) -> list[str]:
         seen.add(k)
         cand.append(vv)
 
-    base = label.strip()
+    base = clean_label_prefix_noise(label.strip(), shop_prefixes)
+    base = normalize_separators(base)
     add(base)
     no_qty = strip_qty_tokens(base)
     add(no_qty)
     no_batch = strip_batch_suffix(no_qty)
     add(no_batch)
+    for v in safe_fraction_equivalents(no_batch):
+        add(v)
 
     for p in sorted((x.strip() for x in shop_prefixes if x and str(x).strip()), key=len, reverse=True):
-        if base.startswith(p):
-            rest = base[len(p) :].lstrip("-_ ")
+        pp = normalize_shop_prefix_token(p)
+        if not pp:
+            continue
+        if normalize_key(base).startswith(normalize_key(pp + "-")) or normalize_key(base) == normalize_key(pp):
+            rest = base[len(pp) :].lstrip("-_ ")
+            rest = normalize_separators(rest)
             add(rest)
             add(strip_qty_tokens(rest))
-            add(strip_batch_suffix(strip_qty_tokens(rest)))
+            rest2 = strip_batch_suffix(strip_qty_tokens(rest))
+            add(rest2)
+            for v in safe_fraction_equivalents(rest2):
+                add(v)
     return cand
 
 
@@ -168,7 +248,8 @@ def process_sku_table(
     if not col_label:
         raise ValueError("SKU 表缺少「Custom Label」列")
 
-    # 构建真实 SKU 候选库（同店铺 + 全局）；索引值保留原文，key用lower精确匹配
+    # 构建真实 SKU 候选库（同店铺 + 全局）
+    # key 为规范化结果，value 为原始值集合（用于审计与歧义判断）
     real_pool_by_account: dict[str, dict[str, set[str]]] = {}
     real_pool_global: dict[str, set[str]] = {}
     if col_real:
@@ -177,7 +258,7 @@ def process_sku_table(
             real_sku = str(real_val).strip() if real_val is not None else ""
             if not real_sku:
                 continue
-            rk = normalize_key(real_sku)
+            rk = normalize_real_sku(real_sku)
             acc_v = row.get(col_acc)
             acc_s = str(acc_v).strip() if acc_v is not None else ""
             if acc_s:
@@ -224,20 +305,38 @@ def process_sku_table(
 
         # 只接受“唯一精确命中”
         hit_values: set[str] = set()
+        hit_norm_keys: set[str] = set()
         hit_from_acc = False
         for c in candidates:
-            ck = normalize_key(c)
+            ck = normalize_real_sku(c)
             vals = pool_acc.get(ck)
             if vals:
                 hit_values.update(vals)
+                hit_norm_keys.add(ck)
                 hit_from_acc = True
             else:
                 gvals = real_pool_global.get(ck)
                 if gvals:
                     hit_values.update(gvals)
+                    hit_norm_keys.add(ck)
 
-        if len(hit_values) == 1:
-            base["匹配SKU"] = next(iter(hit_values))
+        # 先按规范化去重判断歧义（大小写差异不应算多值）
+        if len(hit_norm_keys) == 1:
+            only_key = next(iter(hit_norm_keys))
+            canonical_values = sorted(real_pool_global.get(only_key, set()) or hit_values)
+            chosen = canonical_values[0] if canonical_values else next(iter(hit_values))
+            if is_high_risk_hit(chosen):
+                base["匹配SKU"] = ""
+                base["数量"] = ""
+                base["匹配状态"] = "失败"
+                base["失败原因"] = f"命中高风险候选，已拦截人工复核：{chosen}"
+                base["匹配审计"] = (
+                    f"HIGH_RISK_HIT;scope={'ACCOUNT' if hit_from_acc else 'GLOBAL'};"
+                    f"hit={chosen};candidates={candidates[:8]}"
+                )
+                out.append(base)
+                continue
+            base["匹配SKU"] = chosen
             base["数量"] = qty
             base["匹配状态"] = "成功"
             base["失败原因"] = ""
@@ -251,9 +350,9 @@ def process_sku_table(
         base["匹配SKU"] = ""
         base["数量"] = ""
         base["匹配状态"] = "失败"
-        if len(hit_values) > 1:
-            base["失败原因"] = f"命中多个真实SKU，存在歧义：{sorted(hit_values)[:6]}"
-            base["匹配审计"] = f"AMBIGUOUS;hits={len(hit_values)};candidates={candidates[:8]}"
+        if len(hit_norm_keys) > 1:
+            base["失败原因"] = f"命中多个真实SKU规范值，存在歧义：{sorted(hit_norm_keys)[:6]}"
+            base["匹配审计"] = f"AMBIGUOUS;hits={len(hit_norm_keys)};candidates={candidates[:8]}"
         else:
             base["失败原因"] = f"未在万邑通SKU候选库中匹配到真实SKU；候选值={candidates}"
             base["匹配审计"] = f"NO_HIT;candidates={candidates[:8]}"
