@@ -33,6 +33,21 @@ def resolve_column(headers: list[str], aliases: list[str]) -> str | None:
     return None
 
 
+def headers_contain_normalized(headers: list[str], canonical: str) -> bool:
+    """表头里是否已有与 canonical 规范化后相同的列（含双语表头第一行）。"""
+    t = norm_header(canonical)
+    return any(norm_header(h) == t for h in headers)
+
+
+def get_row_value_by_norm(row: dict[str, Any], canonical: str) -> Any:
+    """按规范化列名从行字典取值（用于结果列可能是「近似匹配\\nFuzzy」等情况）。"""
+    t = norm_header(canonical)
+    for k, v in row.items():
+        if norm_header(str(k)) == t:
+            return v
+    return None
+
+
 def _read_xlsx(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     wb = load_workbook(path, read_only=True, data_only=True)
     try:

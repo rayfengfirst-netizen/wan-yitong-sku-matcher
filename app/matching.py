@@ -25,6 +25,19 @@ SKU_LABEL_ALIASES = [
 ]
 SKU_REAL_ALIASES = ["万邑通SKU", "万邑通 sku", "winit sku", "真实SKU", "真实sku"]
 
+# 结果列：写入时必须用表头「实际字符串」，否则 xlsx 导出按原表头取格会读到空
+SKU_OUT_MATCH_ALIASES = ["匹配SKU", "匹配 sku", "matchedsku"]
+SKU_OUT_APPROX_ALIASES = ["近似匹配", "近似 sku", "fuzzymatch"]
+SKU_OUT_QTY_ALIASES = ["数量", "qty", "quantity"]
+SKU_OUT_STATUS_ALIASES = ["匹配状态", "matchstatus"]
+SKU_OUT_FAIL_ALIASES = ["失败原因", "failreason"]
+SKU_OUT_AUDIT_ALIASES = ["匹配审计", "matchaudit"]
+
+
+def _resolve_output_column(headers: list[str], aliases: list[str], fallback: str) -> str:
+    return resolve_column(headers, aliases) or fallback
+
+
 # 近似匹配：宁可少匹配也不要乱匹配
 FUZZY_MIN_RATIO = 0.88
 FUZZY_MIN_MARGIN = 0.04
@@ -293,6 +306,13 @@ def process_sku_table(
     if not col_real:
         raise ValueError("SKU 表缺少「万邑通SKU」列（用于列举真实SKU池）")
 
+    c_match = _resolve_output_column(sku_headers, SKU_OUT_MATCH_ALIASES, "匹配SKU")
+    c_approx = _resolve_output_column(sku_headers, SKU_OUT_APPROX_ALIASES, "近似匹配")
+    c_qty = _resolve_output_column(sku_headers, SKU_OUT_QTY_ALIASES, "数量")
+    c_status = _resolve_output_column(sku_headers, SKU_OUT_STATUS_ALIASES, "匹配状态")
+    c_fail = _resolve_output_column(sku_headers, SKU_OUT_FAIL_ALIASES, "失败原因")
+    c_audit = _resolve_output_column(sku_headers, SKU_OUT_AUDIT_ALIASES, "匹配审计")
+
     norm_to_canon, pool_display = _build_winit_pool_impl(sku_rows, col_real)
     if not norm_to_canon:
         raise ValueError(
@@ -308,32 +328,32 @@ def process_sku_table(
         acc_str = str(acc).strip() if acc is not None else ""
         label_str = str(label).strip() if label is not None else ""
 
-        base.setdefault("匹配SKU", "")
-        base.setdefault("近似匹配", "")
-        base.setdefault("数量", "")
-        base.setdefault("匹配状态", "")
-        base.setdefault("失败原因", "")
-        base.setdefault("匹配审计", "")
+        base.setdefault(c_match, "")
+        base.setdefault(c_approx, "")
+        base.setdefault(c_qty, "")
+        base.setdefault(c_status, "")
+        base.setdefault(c_fail, "")
+        base.setdefault(c_audit, "")
 
         if not acc_str:
-            base["匹配状态"] = "失败"
-            base["失败原因"] = "店铺账号为空"
-            base["匹配审计"] = "NO_ACCOUNT"
+            base[c_status] = "失败"
+            base[c_fail] = "店铺账号为空"
+            base[c_audit] = "NO_ACCOUNT"
             out.append(base)
             continue
 
         shorts = full_to_shorts.get(acc_str)
         if not shorts:
-            base["匹配状态"] = "失败"
-            base["失败原因"] = f"配对表中找不到店铺全称/账号「{acc_str}」"
-            base["匹配审计"] = "NO_SHOP_PREFIX"
+            base[c_status] = "失败"
+            base[c_fail] = f"配对表中找不到店铺全称/账号「{acc_str}」"
+            base[c_audit] = "NO_SHOP_PREFIX"
             out.append(base)
             continue
 
         if not label_str:
-            base["匹配状态"] = "失败"
-            base["失败原因"] = "Custom Label 为空"
-            base["匹配审计"] = "EMPTY_LABEL"
+            base[c_status] = "失败"
+            base[c_fail] = "Custom Label 为空"
+            base[c_audit] = "EMPTY_LABEL"
             out.append(base)
             continue
 
@@ -348,22 +368,22 @@ def process_sku_table(
 
         if len(hit_norms) == 1:
             nk0 = next(iter(hit_norms))
-            base["匹配SKU"] = norm_to_canon[nk0]
-            base["数量"] = qty
-            base["近似匹配"] = ""
-            base["匹配状态"] = "成功"
-            base["失败原因"] = ""
-            base["匹配审计"] = f"EXACT;pool={len(norm_to_canon)};candidates={candidates[:6]}"
+            base[c_match] = norm_to_canon[nk0]
+            base[c_qty] = qty
+            base[c_approx] = ""
+            base[c_status] = "成功"
+            base[c_fail] = ""
+            base[c_audit] = f"EXACT;pool={len(norm_to_canon)};candidates={candidates[:6]}"
             out.append(base)
             continue
 
         if len(hit_norms) > 1:
-            base["匹配SKU"] = ""
-            base["数量"] = qty
-            base["近似匹配"] = ""
-            base["匹配状态"] = "失败"
-            base["失败原因"] = f"精确匹配到多个万邑通SKU（歧义）：{[norm_to_canon[k] for k in sorted(hit_norms)][:5]}"
-            base["匹配审计"] = f"AMBIGUOUS_EXACT;hits={len(hit_norms)}"
+            base[c_match] = ""
+            base[c_qty] = qty
+            base[c_approx] = ""
+            base[c_status] = "失败"
+            base[c_fail] = f"精确匹配到多个万邑通SKU（歧义）：{[norm_to_canon[k] for k in sorted(hit_norms)][:5]}"
+            base[c_audit] = f"AMBIGUOUS_EXACT;hits={len(hit_norms)}"
             out.append(base)
             continue
 
@@ -374,25 +394,25 @@ def process_sku_table(
             if f:
                 fuzzy_hits.add(f)
         if len(fuzzy_hits) == 1:
-            base["匹配SKU"] = ""
-            base["数量"] = qty
-            base["近似匹配"] = next(iter(fuzzy_hits))
-            base["匹配状态"] = "成功"
-            base["失败原因"] = ""
-            base["匹配审计"] = f"FUZZY;pool={len(norm_to_canon)};candidates={candidates[:6]}"
+            base[c_match] = ""
+            base[c_qty] = qty
+            base[c_approx] = next(iter(fuzzy_hits))
+            base[c_status] = "成功"
+            base[c_fail] = ""
+            base[c_audit] = f"FUZZY;pool={len(norm_to_canon)};candidates={candidates[:6]}"
             out.append(base)
             continue
 
-        base["匹配SKU"] = ""
-        base["数量"] = qty
-        base["近似匹配"] = ""
-        base["匹配状态"] = "失败"
+        base[c_match] = ""
+        base[c_qty] = qty
+        base[c_approx] = ""
+        base[c_status] = "失败"
         if len(fuzzy_hits) > 1:
-            base["失败原因"] = f"近似匹配结果不唯一：{sorted(fuzzy_hits)[:5]}"
-            base["匹配审计"] = "AMBIGUOUS_FUZZY"
+            base[c_fail] = f"近似匹配结果不唯一：{sorted(fuzzy_hits)[:5]}"
+            base[c_audit] = "AMBIGUOUS_FUZZY"
         else:
-            base["失败原因"] = "未在万邑通SKU池中找到精确匹配，且近似匹配未达置信阈值"
-            base["匹配审计"] = f"NO_HIT;candidates={candidates[:8]}"
+            base[c_fail] = "未在万邑通SKU池中找到精确匹配，且近似匹配未达置信阈值"
+            base[c_audit] = f"NO_HIT;candidates={candidates[:8]}"
         out.append(base)
 
     return out

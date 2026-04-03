@@ -16,7 +16,12 @@ from openpyxl import Workbook
 
 from app import jobs as jobs_store
 from app.matching import build_short_map, process_sku_table
-from app.table_io import load_table, write_result_xlsx
+from app.table_io import (
+    get_row_value_by_norm,
+    headers_contain_normalized,
+    load_table,
+    write_result_xlsx,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +67,7 @@ def _template_sku_bytes() -> bytes:
             "店铺账号\nShop Account",
             "custom Label",
             "匹配SKU",
+            "近似匹配",
             "数量",
             "万邑通SKU",
         ]
@@ -187,14 +193,24 @@ async def api_match(
             "失败原因",
             "匹配审计",
         ]
-        out_headers = list(sku_headers) + [c for c in extra_cols if c not in sku_headers]
+        out_headers = list(sku_headers) + [
+            c for c in extra_cols if not headers_contain_normalized(sku_headers, c)
+        ]
 
-        ok_count = sum(1 for r in out_rows if r.get("匹配状态") == "成功")
-        fail_count = sum(1 for r in out_rows if r.get("匹配状态") == "失败")
+        ok_count = sum(
+            1
+            for r in out_rows
+            if str(get_row_value_by_norm(r, "匹配状态") or "") == "成功"
+        )
+        fail_count = sum(
+            1
+            for r in out_rows
+            if str(get_row_value_by_norm(r, "匹配状态") or "") == "失败"
+        )
         row_errors: list[tuple[int, str]] = []
         for i, r in enumerate(out_rows, start=2):
-            if r.get("匹配状态") == "失败":
-                reason = str(r.get("失败原因") or "未知原因")
+            if str(get_row_value_by_norm(r, "匹配状态") or "") == "失败":
+                reason = str(get_row_value_by_norm(r, "失败原因") or "未知原因")
                 row_errors.append((i, reason))
 
         jid = str(uuid.uuid4())

@@ -70,6 +70,34 @@ def test_fuzzy_fills_approx_column():
     assert out[1]["匹配状态"] == "成功"
 
 
+def test_fuzzy_writes_bilingual_approx_header():
+    """双语表头时，近似匹配必须写在实际表头键上，否则导出 xlsx 该列为空。"""
+    full_to_shorts = _map_ye()
+    h_approx = "近似匹配\nFuzzy"
+    headers = ["店铺账号", "custom Label", "万邑通SKU", "匹配SKU", h_approx, "数量"]
+    rows = [
+        {
+            "店铺账号": "12-yeeranterpart",
+            "custom Label": "x",
+            "万邑通SKU": "EXACT-SKU-12345",
+            "匹配SKU": "",
+            h_approx: "",
+            "数量": "",
+        },
+        {
+            "店铺账号": "12-yeeranterpart",
+            "custom Label": "ye-EXACT-SKU-12345X-G",
+            "万邑通SKU": "",
+            "匹配SKU": "",
+            h_approx: "",
+            "数量": "",
+        },
+    ]
+    out = process_sku_table(headers, rows, full_to_shorts)
+    assert out[1][h_approx] == "EXACT-SKU-12345"
+    assert out[1]["匹配SKU"] == ""
+
+
 def test_empty_pool_raises():
     import pytest
 
