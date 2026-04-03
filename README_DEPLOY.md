@@ -77,11 +77,43 @@ sudo systemctl restart wan-yitong-sku-matcher
 
 ## 本机发布脚本（推荐）
 
-在仓库根目录执行（需已 `git push`，且 SSH 已能无密码登录服务器）：
+在仓库根目录执行（需已 `git push`，且 SSH 已能登录服务器）：
 
 ```bash
 ./deploy/remote.sh
 ```
+
+### 私钥带 passphrase（很常见）
+
+`ssh-copy-id` 已提示公钥在服务器上，但 **`./deploy/remote.sh` 仍 Permission denied**，通常是因为脚本在非交互模式下无法用键盘输入密码解锁私钥。
+
+**做法（二选一）：**
+
+1. **当前终端会话先加载密钥**（输一次 passphrase）：
+
+   ```bash
+   ssh-add ~/.ssh/id_ed25519
+   ./deploy/remote.sh
+   ```
+
+2. **macOS：把密钥交给钥匙串**，以后本机终端 / 部分场景可自动解锁：
+
+   ```bash
+   ssh-add --apple-use-keychain ~/.ssh/id_ed25519
+   ```
+
+   若尚未配置，可在 `~/.ssh/config` 里为对应 `Host` 增加：
+
+   ```sshconfig
+   Host 8.218.58.28
+     HostName 8.218.58.28
+     User root
+     IdentityFile ~/.ssh/id_ed25519
+     AddKeysToAgent yes
+     UseKeychain yes
+   ```
+
+仅在需要「不要卡住、失败立刻退出」的自动化里使用：`SSH_BATCH_MODE=yes ./deploy/remote.sh`（此时**必须**已 `ssh-add`，否则仍会失败）。
 
 指定密钥（与服务器 `authorized_keys` 一致的那把）：
 
