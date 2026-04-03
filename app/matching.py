@@ -1,21 +1,19 @@
-"""SKU逆向还原：标准化 + 候选生成 + 唯一精确命中。"""
+"""SKU 匹配：按业务算法将 custom Label 还原为万邑通SKU（全表 SKU 池 + 精确 + 近似）。"""
 
 from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Any
 
 from app.table_io import resolve_column
 
 logger = logging.getLogger(__name__)
 
-# 店铺简称配对关系表
 MAP_FULL_ALIASES = ["店铺全称", "店铺账号", "全称", "账号全称"]
 MAP_SHORT_ALIASES = ["店铺简称", "简称"]
 
-# SKU 表
 SKU_ACCOUNT_ALIASES = ["店铺账号", "店铺全称", "账号", "selleraccount"]
 SKU_LABEL_ALIASES = [
     "Custom Label",
@@ -27,20 +25,15 @@ SKU_LABEL_ALIASES = [
 ]
 SKU_REAL_ALIASES = ["万邑通SKU", "万邑通 sku", "winit sku", "真实SKU", "真实sku"]
 
-
-@dataclass
-class MatchOutcome:
-    ok: bool
-    matched_sku: str
-    qty: int
-    reason: str
+# 近似匹配：宁可少匹配也不要乱匹配
+FUZZY_MIN_RATIO = 0.88
+FUZZY_MIN_MARGIN = 0.04
 
 
 def build_short_map(
     mapping_rows: list[dict[str, Any]],
     map_headers: list[str],
 ) -> tuple[dict[str, set[str]], list[str]]:
-    """店铺全称 -> 店铺简称列表（支持一店多简称）。"""
     col_full = resolve_column(map_headers, MAP_FULL_ALIASES)
     col_short = resolve_column(map_headers, MAP_SHORT_ALIASES)
     if not col_full or not col_short:
@@ -88,41 +81,6 @@ def build_short_map(
     return m, warnings
 
 
-def strip_batch_suffix(raw: str) -> str:
-    """去掉刊登批次后缀：-A/-B/_A（仅末尾1位字母）。"""
-    s = raw.rstrip()
-    return re.sub(r"[-_]\s*[A-Za-z]\s*$", "", s).strip()
-
-
-def parse_qty(label: str) -> int:
-    """提取数量，默认1。仅当能明确提取到单一数字时生效。"""
-    tokens = re.findall(r"\*\s*(\d+)|[\(（]\s*(\d+)\s*[\)）]", label)
-    nums = []
-    for a, b in tokens:
-        n = a or b
-        if n:
-            nums.append(int(n))
-    if not nums:
-        return 1
-    uniq = sorted(set(nums))
-    if len(uniq) == 1:
-        return uniq[0]
-    # 出现多个不同数字，不做激进猜测
-    return 1
-
-
-def strip_qty_tokens(raw: str) -> str:
-    """去掉任意位置数量标记：*2/(2)/（2）。"""
-    s = re.sub(r"\*\s*\d+", "", raw)
-    s = re.sub(r"[\(（]\s*\d+\s*[\)）]", "", s)
-    s = re.sub(r"\s{2,}", " ", s)
-    return s.strip()
-
-
-def normalize_key(v: str) -> str:
-    return str(v).strip().lower()
-
-
 def normalize_separators(s: str) -> str:
     s = str(s)
     s = s.replace("—", "-").replace("–", "-").replace("_", "-")
@@ -132,13 +90,14 @@ def normalize_separators(s: str) -> str:
 
 
 def normalize_shop_prefix_token(prefix: str) -> str:
-    p = normalize_separators(prefix).strip()
-    p = p.rstrip("-")
-    return p
+    return normalize_separators(prefix).strip().rstrip("-")
+
+
+def normalize_real_sku(v: str) -> str:
+    return normalize_separators(v).lower()
 
 
 def clean_label_prefix_noise(label: str, shop_prefixes: set[str]) -> str:
-    """仅清洗已知脏前缀模式，不做泛化猜测。"""
     s = normalize_separators(label)
     prefixes = sorted(
         {normalize_shop_prefix_token(x) for x in shop_prefixes if str(x).strip()},
@@ -148,18 +107,50 @@ def clean_label_prefix_noise(label: str, shop_prefixes: set[str]) -> str:
     for p in prefixes:
         if not p:
             continue
-        # aBR-xxx -> BR-xxx
         s = re.sub(rf"^a{re.escape(p)}-", f"{p}-", s, flags=re.I)
-        # Z P-xxx -> ZP-xxx
         spaced = "-".join(list(p))
         s = re.sub(rf"^{re.escape(spaced)}-", f"{p}-", s, flags=re.I)
-        # 重复前缀：LZLZ-xxx -> LZ-xxx
         s = re.sub(rf"^(?:{re.escape(p)}){{2,}}-", f"{p}-", s, flags=re.I)
     return s
 
 
-def safe_fraction_equivalents(s: str) -> set[str]:
-    """仅支持明确、安全的英寸写法等价。"""
+def strip_batch_suffix(raw: str) -> str:
+    s = raw.rstrip()
+    return re.sub(r"[-_]\s*[A-Za-z]\s*$", "", s).strip()
+
+
+def strip_all_batch_suffixes(s: str) -> str:
+    t = s
+    while True:
+        u = strip_batch_suffix(t)
+        if u == t:
+            return t
+        t = u
+
+
+def parse_qty(label: str) -> int:
+    tokens = re.findall(r"\*\s*(\d+)|[\(（]\s*(\d+)\s*[\)）]", label)
+    nums: list[int] = []
+    for a, b in tokens:
+        n = a or b
+        if n:
+            nums.append(int(n))
+    if not nums:
+        return 1
+    uniq = sorted(set(nums))
+    if len(uniq) == 1:
+        return uniq[0]
+    return 1
+
+
+def strip_qty_tokens(raw: str) -> str:
+    s = re.sub(r"\*\s*\d+", "", raw)
+    s = re.sub(r"[\(（]\s*\d+\s*[\)）]", "", s)
+    s = re.sub(r"\s{2,}", " ", s)
+    return s.strip()
+
+
+def safe_fraction_equivalents(s: str) -> list[str]:
     pairs = [
         (r"0\.75\s*inch", "3/4 inch"),
         (r"3/4\s*inch", "0.75 inch"),
@@ -168,70 +159,123 @@ def safe_fraction_equivalents(s: str) -> set[str]:
         (r"0\.25\s*inch", "1/4 inch"),
         (r"1/4\s*inch", "0.25 inch"),
     ]
-    out: set[str] = set()
+    out: list[str] = []
     for pat, repl in pairs:
         if re.search(pat, s, flags=re.I):
-            out.add(re.sub(pat, repl, s, flags=re.I))
-    return {normalize_separators(x) for x in out}
+            out.append(normalize_separators(re.sub(pat, repl, s, flags=re.I)))
+    return out
 
 
-def normalize_real_sku(v: str) -> str:
-    return normalize_separators(v).lower()
+def _build_winit_pool_impl(
+    sku_rows: list[dict[str, Any]],
+    col_real: str,
+) -> tuple[dict[str, str], list[str]]:
+    norm_to_canon: dict[str, str] = {}
+    order: list[str] = []
+    for row in sku_rows:
+        rv = row.get(col_real)
+        s = str(rv).strip() if rv is not None else ""
+        if not s:
+            continue
+        nk = normalize_real_sku(s)
+        if nk not in norm_to_canon:
+            norm_to_canon[nk] = s
+            order.append(s)
+    return norm_to_canon, order
 
 
-def is_high_risk_hit(hit: str) -> bool:
-    h = normalize_separators(hit).upper()
-    words = ["HOME", "LIGHT", "WASHERARM", "MOUNTING BRACKET"]
-    if h.startswith("HOME-") and re.search(r"[A-Z]{3,}-\d", h) is None:
-        return True
-    score = sum(1 for w in words if w in h)
-    if score >= 2:
-        return True
-    # 过于“自然语言串”，且缺少明显内部编码段
-    if re.search(r"[A-Z]{2,}\d{2,}", h) is None and h.count("-") >= 2 and len(h) >= 18:
-        return True
-    return False
+def try_strip_shop_prefix(s: str, prefix: str) -> str | None:
+    """若 s 以该店铺简称开头（后跟 -/_ 或整段即简称），返回去掉前缀后的主体。"""
+    p = normalize_shop_prefix_token(prefix)
+    if not p:
+        return None
+    m = re.match(re.escape(p) + r"(?:[-_]|$)", s, flags=re.I)
+    if not m:
+        return None
+    end = m.end()
+    if end >= len(s):
+        return ""
+    rest = s[end:].lstrip("-_ ")
+    return normalize_separators(rest) if rest else ""
 
 
-def generate_candidates(label: str, shop_prefixes: set[str]) -> list[str]:
-    """保守候选生成：原样分支 + 去数量 + 去批次后缀 + 去店铺前缀分支。"""
-    cand: list[str] = []
+def collect_row_candidates(label_raw: str, shop_prefixes: set[str]) -> list[str]:
+    """
+    类型1：含店铺前缀 → 去前缀 + 去批次 + 去数量
+    类型2：不含店铺前缀 → 仅去批次 + 去数量
+    类型3：LZ- 与真实 SKU 均可能含 LZ- → 保留原样 + 尝试去掉首段 LZ-
+    全部并入候选（去重），再对万邑通SKU池做精确/近似。
+    """
     seen: set[str] = set()
+    out: list[str] = []
 
-    def add(v: str) -> None:
-        vv = str(v).strip()
-        if not vv:
+    def add(x: str) -> None:
+        v = normalize_separators(x.strip())
+        if not v:
             return
-        k = normalize_key(vv)
+        k = normalize_real_sku(v)
         if k in seen:
             return
         seen.add(k)
-        cand.append(vv)
+        out.append(v)
 
-    base = clean_label_prefix_noise(label.strip(), shop_prefixes)
+    base = clean_label_prefix_noise(label_raw.strip(), shop_prefixes)
     base = normalize_separators(base)
-    add(base)
-    no_qty = strip_qty_tokens(base)
-    add(no_qty)
-    no_batch = strip_batch_suffix(no_qty)
-    add(no_batch)
-    for v in safe_fraction_equivalents(no_batch):
-        add(v)
+    s = strip_all_batch_suffixes(strip_qty_tokens(base))
+    add(s)
+    for alt in safe_fraction_equivalents(s):
+        add(alt)
 
-    for p in sorted((x.strip() for x in shop_prefixes if x and str(x).strip()), key=len, reverse=True):
-        pp = normalize_shop_prefix_token(p)
-        if not pp:
-            continue
-        if normalize_key(base).startswith(normalize_key(pp + "-")) or normalize_key(base) == normalize_key(pp):
-            rest = base[len(pp) :].lstrip("-_ ")
-            rest = normalize_separators(rest)
+    # 类型1：按最长简称优先尝试去前缀
+    stripped_any = False
+    for pref in sorted(
+        {str(x).strip() for x in shop_prefixes if str(x).strip()},
+        key=len,
+        reverse=True,
+    ):
+        rest = try_strip_shop_prefix(s, pref)
+        if rest is not None and rest != s:
+            stripped_any = True
             add(rest)
-            add(strip_qty_tokens(rest))
-            rest2 = strip_batch_suffix(strip_qty_tokens(rest))
-            add(rest2)
-            for v in safe_fraction_equivalents(rest2):
-                add(v)
-    return cand
+            add(strip_all_batch_suffixes(strip_qty_tokens(rest)))
+
+    # 类型3：LZ- 双分支（无论是否已去店铺前缀）
+    if re.match(r"^LZ[-_]", s, flags=re.I):
+        m = re.match(r"^LZ[-_]", s, flags=re.I)
+        if m:
+            tail = s[m.end() :].lstrip("-_ ")
+            if tail:
+                add(normalize_separators(tail))
+                add(strip_all_batch_suffixes(strip_qty_tokens(tail)))
+
+    # 若完全没去前缀且上面没产生额外候选，s 已包含「无前缀」情形（类型2）
+    if not stripped_any:
+        pass
+
+    return out
+
+
+def fuzzy_best_canonical(query_norm: str, norm_to_canon: dict[str, str]) -> str | None:
+    if not query_norm or not norm_to_canon:
+        return None
+    best_r = -1.0
+    second_r = -1.0
+    best_canon: str | None = None
+    for nk, canon in norm_to_canon.items():
+        r = SequenceMatcher(None, query_norm, nk).ratio()
+        if r > best_r:
+            second_r = best_r
+            best_r = r
+            best_canon = canon
+        elif r > second_r:
+            second_r = r
+    if best_canon is None:
+        return None
+    if best_r < FUZZY_MIN_RATIO:
+        return None
+    if best_r - second_r < FUZZY_MIN_MARGIN and second_r >= FUZZY_MIN_RATIO - 0.05:
+        return None
+    return best_canon
 
 
 def process_sku_table(
@@ -239,7 +283,6 @@ def process_sku_table(
     sku_rows: list[dict[str, Any]],
     full_to_shorts: dict[str, set[str]],
 ) -> list[dict[str, Any]]:
-    """返回输出行：只在唯一高置信精确命中时写入匹配SKU。"""
     col_acc = resolve_column(sku_headers, SKU_ACCOUNT_ALIASES)
     col_label = resolve_column(sku_headers, SKU_LABEL_ALIASES)
     col_real = resolve_column(sku_headers, SKU_REAL_ALIASES)
@@ -247,52 +290,47 @@ def process_sku_table(
         raise ValueError("SKU 表缺少「店铺账号」列（或与全称对应的列）")
     if not col_label:
         raise ValueError("SKU 表缺少「Custom Label」列")
+    if not col_real:
+        raise ValueError("SKU 表缺少「万邑通SKU」列（用于列举真实SKU池）")
 
-    # 构建真实 SKU 候选库（同店铺 + 全局）
-    # key 为规范化结果，value 为原始值集合（用于审计与歧义判断）
-    real_pool_by_account: dict[str, dict[str, set[str]]] = {}
-    real_pool_global: dict[str, set[str]] = {}
-    if col_real:
-        for row in sku_rows:
-            real_val = row.get(col_real)
-            real_sku = str(real_val).strip() if real_val is not None else ""
-            if not real_sku:
-                continue
-            rk = normalize_real_sku(real_sku)
-            acc_v = row.get(col_acc)
-            acc_s = str(acc_v).strip() if acc_v is not None else ""
-            if acc_s:
-                real_pool_by_account.setdefault(acc_s, {}).setdefault(rk, set()).add(real_sku)
-            real_pool_global.setdefault(rk, set()).add(real_sku)
+    norm_to_canon, pool_display = _build_winit_pool_impl(sku_rows, col_real)
+    if not norm_to_canon:
+        raise ValueError(
+            "「万邑通SKU」列中没有任何非空值，无法构建真实SKU池；请在同表该列列举全部真实SKU"
+        )
+    logger.info("万邑通SKU池: %s 个唯一SKU", len(norm_to_canon))
 
     out: list[dict[str, Any]] = []
-    for idx, row in enumerate(sku_rows, start=2):
-        account = row.get(col_acc)
-        label = row.get(col_label)
+    for row in sku_rows:
         base: dict[str, Any] = {k: row.get(k, "") for k in sku_headers}
-        acc_str = str(account).strip() if account is not None else ""
+        acc = row.get(col_acc)
+        label = row.get(col_label)
+        acc_str = str(acc).strip() if acc is not None else ""
+        label_str = str(label).strip() if label is not None else ""
+
+        base.setdefault("匹配SKU", "")
+        base.setdefault("近似匹配", "")
+        base.setdefault("数量", "")
+        base.setdefault("匹配状态", "")
+        base.setdefault("失败原因", "")
+        base.setdefault("匹配审计", "")
+
         if not acc_str:
-            base["匹配SKU"] = ""
-            base["数量"] = ""
             base["匹配状态"] = "失败"
             base["失败原因"] = "店铺账号为空"
             base["匹配审计"] = "NO_ACCOUNT"
             out.append(base)
             continue
-        short_list = full_to_shorts.get(acc_str)
-        if not short_list:
-            base["匹配SKU"] = ""
-            base["数量"] = ""
+
+        shorts = full_to_shorts.get(acc_str)
+        if not shorts:
             base["匹配状态"] = "失败"
             base["失败原因"] = f"配对表中找不到店铺全称/账号「{acc_str}」"
             base["匹配审计"] = "NO_SHOP_PREFIX"
             out.append(base)
             continue
 
-        label_str = str(label).strip() if label is not None else ""
         if not label_str:
-            base["匹配SKU"] = ""
-            base["数量"] = ""
             base["匹配状态"] = "失败"
             base["失败原因"] = "Custom Label 为空"
             base["匹配审计"] = "EMPTY_LABEL"
@@ -300,61 +338,61 @@ def process_sku_table(
             continue
 
         qty = parse_qty(label_str)
-        candidates = generate_candidates(label_str, short_list)
-        pool_acc = real_pool_by_account.get(acc_str, {})
+        candidates = collect_row_candidates(label_str, shorts)
 
-        # 只接受“唯一精确命中”
-        hit_values: set[str] = set()
-        hit_norm_keys: set[str] = set()
-        hit_from_acc = False
+        hit_norms: set[str] = set()
         for c in candidates:
-            ck = normalize_real_sku(c)
-            vals = pool_acc.get(ck)
-            if vals:
-                hit_values.update(vals)
-                hit_norm_keys.add(ck)
-                hit_from_acc = True
-            else:
-                gvals = real_pool_global.get(ck)
-                if gvals:
-                    hit_values.update(gvals)
-                    hit_norm_keys.add(ck)
+            nk = normalize_real_sku(c)
+            if nk in norm_to_canon:
+                hit_norms.add(nk)
 
-        # 先按规范化去重判断歧义（大小写差异不应算多值）
-        if len(hit_norm_keys) == 1:
-            only_key = next(iter(hit_norm_keys))
-            canonical_values = sorted(real_pool_global.get(only_key, set()) or hit_values)
-            chosen = canonical_values[0] if canonical_values else next(iter(hit_values))
-            if is_high_risk_hit(chosen):
-                base["匹配SKU"] = ""
-                base["数量"] = ""
-                base["匹配状态"] = "失败"
-                base["失败原因"] = f"命中高风险候选，已拦截人工复核：{chosen}"
-                base["匹配审计"] = (
-                    f"HIGH_RISK_HIT;scope={'ACCOUNT' if hit_from_acc else 'GLOBAL'};"
-                    f"hit={chosen};candidates={candidates[:8]}"
-                )
-                out.append(base)
-                continue
-            base["匹配SKU"] = chosen
+        if len(hit_norms) == 1:
+            nk0 = next(iter(hit_norms))
+            base["匹配SKU"] = norm_to_canon[nk0]
             base["数量"] = qty
+            base["近似匹配"] = ""
             base["匹配状态"] = "成功"
             base["失败原因"] = ""
-            base["匹配审计"] = (
-                f"UNIQUE_EXACT;scope={'ACCOUNT' if hit_from_acc else 'GLOBAL'};"
-                f"candidates={candidates[:8]}"
-            )
+            base["匹配审计"] = f"EXACT;pool={len(norm_to_canon)};candidates={candidates[:6]}"
+            out.append(base)
+            continue
+
+        if len(hit_norms) > 1:
+            base["匹配SKU"] = ""
+            base["数量"] = qty
+            base["近似匹配"] = ""
+            base["匹配状态"] = "失败"
+            base["失败原因"] = f"精确匹配到多个万邑通SKU（歧义）：{[norm_to_canon[k] for k in sorted(hit_norms)][:5]}"
+            base["匹配审计"] = f"AMBIGUOUS_EXACT;hits={len(hit_norms)}"
+            out.append(base)
+            continue
+
+        # 无精确命中：对每个候选做保守近似匹配，仅接受全局唯一最佳
+        fuzzy_hits: set[str] = set()
+        for c in candidates:
+            f = fuzzy_best_canonical(normalize_real_sku(c), norm_to_canon)
+            if f:
+                fuzzy_hits.add(f)
+        if len(fuzzy_hits) == 1:
+            base["匹配SKU"] = ""
+            base["数量"] = qty
+            base["近似匹配"] = next(iter(fuzzy_hits))
+            base["匹配状态"] = "成功"
+            base["失败原因"] = ""
+            base["匹配审计"] = f"FUZZY;pool={len(norm_to_canon)};candidates={candidates[:6]}"
             out.append(base)
             continue
 
         base["匹配SKU"] = ""
-        base["数量"] = ""
+        base["数量"] = qty
+        base["近似匹配"] = ""
         base["匹配状态"] = "失败"
-        if len(hit_norm_keys) > 1:
-            base["失败原因"] = f"命中多个真实SKU规范值，存在歧义：{sorted(hit_norm_keys)[:6]}"
-            base["匹配审计"] = f"AMBIGUOUS;hits={len(hit_norm_keys)};candidates={candidates[:8]}"
+        if len(fuzzy_hits) > 1:
+            base["失败原因"] = f"近似匹配结果不唯一：{sorted(fuzzy_hits)[:5]}"
+            base["匹配审计"] = "AMBIGUOUS_FUZZY"
         else:
-            base["失败原因"] = f"未在万邑通SKU候选库中匹配到真实SKU；候选值={candidates}"
+            base["失败原因"] = "未在万邑通SKU池中找到精确匹配，且近似匹配未达置信阈值"
             base["匹配审计"] = f"NO_HIT;candidates={candidates[:8]}"
         out.append(base)
+
     return out
