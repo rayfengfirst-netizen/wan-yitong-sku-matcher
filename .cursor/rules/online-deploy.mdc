@@ -1,21 +1,33 @@
 ---
-description: 用户说「线上发布」「部署生产」「remote deploy」时执行万邑通 SKU 匹配服务发版
+description: 用户说「线上发布」「部署生产」时发布万邑通 SKU 匹配服务（与同区 walmart 项目同源约定）
 alwaysApply: true
 ---
 
-# 线上发布
+# 线上发布（wan-yitong-sku-matcher）
 
-当用户要求 **线上发布** / **发布线上** / **部署生产** / **发版**（针对本仓库 `wan-yitong-sku-matcher`）时：
+与 **`walmart-listing-production-tool`** 里「用户说线上发布」的约定**一致**，仅目标机与路径不同：
 
-1. **代码**：若存在未推送提交，在仓库根目录执行 `git add` / `git commit`（如有需要）后 `git push origin main`。
-2. **发布命令**：使用**全部权限**（非沙箱）在项目根执行：
-   ```bash
-   cd wan-yitong-sku-matcher && ./deploy/remote.sh
-   ```
-   工作区若已是该目录，则直接 `./deploy/remote.sh`。
-3. **若 `Permission denied (publickey)`**：
-   - 若用户私钥带 **passphrase**：先让其在本机执行 **`ssh-add ~/.ssh/id_ed25519`**（或 `ssh-add --apple-use-keychain`），再重试 `./deploy/remote.sh`。脚本默认**不再**强制 `BatchMode=yes`，以便终端里可用 agent 解锁的密钥。
-   - 再尝试：`DEPLOY_SSH_IDENTITY="$HOME/.ssh/id_ed25519" ./deploy/remote.sh`
-   - 仍失败：按 `README_DEPLOY.md` 检查 **`ssh-copy-id` / 公钥** 与 **`~/.ssh/config`**。
+| 项 | 万邑通（本项目） | 沃尔玛（对照） |
+|----|------------------|------------------|
+| 主机 | `root@8.218.58.28` | `root@8.221.99.46` |
+| 目录 | `/opt/wan-yitong-sku-matcher` | `/opt/walmart-listing-production-tool` |
+| systemd | `wan-yitong-sku-matcher` | `walmart-listing-production-tool` |
+| 健康检查 | `http://127.0.0.1:6578/health` | `http://127.0.0.1:6565/health` |
 
-**重要（对用户预期）**：在终端里「登录一次」**不会**让后续 AI 自动带上会话；必须完成 **SSH 公钥认证**（服务器 `authorized_keys` 中有本机公钥），`./deploy/remote.sh` 才能无交互成功。配置好后，AI 执行该脚本与你在本机终端执行等效。
+## 执行步骤
+
+1. 若有未推送提交：仓库根目录 `git push origin main`。
+2. **发布一条命令**（与 walmart 规则相同写法；**终端工具须 `required_permissions: ["all"]`**，禁用沙箱）：
+
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=20 root@8.218.58.28 'cd /opt/wan-yitong-sku-matcher && git pull && . .venv/bin/activate && pip install -q -r requirements.txt && systemctl restart wan-yitong-sku-matcher && sleep 2 && systemctl is-active wan-yitong-sku-matcher && curl -sS http://127.0.0.1:6578/health'
+```
+
+3. 失败时：`journalctl -u wan-yitong-sku-matcher -n 40 --no-pager`；密钥/口令见仓库根 **`server-ops/SSH_FOR_AGENT.md`**（工作区在上一级 `cursor/` 时）或 **`README_DEPLOY.md`**。
+
+## 为何有时「别的项目能发、这个不能」
+
+**同一台 Mac 上**，你在 **Cursor 终端 / Mac 终端** 里手动 `ssh` 成功，与 **对话里让 Agent 跑命令** 用的子环境**不一定相同**（常见：Agent 进程**接不到 ssh-agent**，也**不能交互输入**私钥 passphrase）。  
+这与选 **8.218** 还是 **8.221** 无关；两机在 Agent 侧要么**都能**在无密钥环境下失败，要么在你本机已 `ssh-add`/钥匙串配置好后**都能**成功。
+
+本机可同样用 **`./deploy/remote.sh`**（与上面一条命令等价；私钥带口令且未进 agent 时用 `SSH_BATCH_MODE=no ./deploy/remote.sh` 可在终端交互解锁）。

@@ -35,6 +35,14 @@ curl -sS http://127.0.0.1:6578/health
 
 ## 日常发布
 
+**服务器上**（已 SSH 登录后）可多行执行；**本机一条命令**（与 walmart Agent 规则同型）：
+
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=20 root@8.218.58.28 'cd /opt/wan-yitong-sku-matcher && git pull && . .venv/bin/activate && pip install -q -r requirements.txt && systemctl restart wan-yitong-sku-matcher && sleep 2 && systemctl is-active wan-yitong-sku-matcher && curl -sS http://127.0.0.1:6578/health'
+```
+
+或在本机仓库执行 **`./deploy/remote.sh`**（等价）。
+
 ```bash
 cd /opt/wan-yitong-sku-matcher
 git pull
@@ -43,13 +51,17 @@ pip install -r requirements.txt
 sudo systemctl restart wan-yitong-sku-matcher
 ```
 
-或复制并使用 `deploy/deploy.sh.example` 为 `deploy/deploy.sh` 后执行。
+或复制并使用 `deploy/deploy.sh.example` 为 `deploy/deploy.sh` 后在**服务器**上执行。
 
-## 为什么 Cursor 里「让 AI 发布」常会失败
+## 与沃尔玛刊登生产工具（同工作区）对齐
 
-- AI 触发的命令跑在 **隔离环境** 里，**默认拿不到你 Mac 的 ssh-agent**，也不会交互输入密码，所以 `ssh root@8.218.58.28` 常变成 **Permission denied**。
-- 即使加上「全部权限」，若 **服务器 `authorized_keys` 里没有当前这台机器正在用的公钥**，同样会拒绝。  
-  在本仓库所在机器上实测：`~/.ssh/id_ed25519` 与 `github_ebay_listing` **均未能登录** `8.218.58.28`，说明要么要用 **另一把密钥**，要么要在服务器上 **补登这把公钥**。
+**发布口令与流程**与 `walmart-listing-production-tool` 的 Agent 约定相同：一条 **`ssh -o BatchMode=yes …`**，且 Cursor 里执行须 **`required_permissions: ["all"]`**。差别只是本服务在 **`8.218.58.28`**、目录 **`/opt/wan-yitong-sku-matcher`**、端口 **6578**。
+
+## 为什么有时「本机终端能发、让 AI 发却 Permission denied」
+
+- **你在 Cursor 终端 / Mac 终端里手动执行** 与 **对话里 Agent 调用的命令** 可能不在同一环境：Agent 子进程**常常接不到 ssh-agent**，也**不能交互输入**私钥 passphrase，于是 `BatchMode=yes` 下容易失败。  
+- 这与连 **8.218** 还是 **8.221** 无关；同一 Agent 环境对两台机往往**同时**成功或**同时**失败。  
+- 详细排查与钥匙串配置见工作区 **`server-ops/SSH_FOR_AGENT.md`**（若仓库在 `Desktop/cursor/` 下）。
 
 ## 一次性配置（做完后本机 / Cursor 用脚本都能发）
 
@@ -113,7 +125,7 @@ sudo systemctl restart wan-yitong-sku-matcher
      UseKeychain yes
    ```
 
-仅在需要「不要卡住、失败立刻退出」的自动化里使用：`SSH_BATCH_MODE=yes ./deploy/remote.sh`（此时**必须**已 `ssh-add`，否则仍会失败）。
+脚本**默认**已带 `BatchMode=yes`（与 walmart 规则一致）。仅在终端里**未** `ssh-add`、需要**交互输入** passphrase 时：`SSH_BATCH_MODE=no ./deploy/remote.sh`。
 
 指定密钥（与服务器 `authorized_keys` 一致的那把）：
 
@@ -127,9 +139,7 @@ DEPLOY_SSH_IDENTITY=~/.ssh/你的私钥 ./deploy/remote.sh
 DEPLOY_HOST=wan-yitong-prod ./deploy/remote.sh
 ```
 
-配置完成后，在 Cursor 里让 AI 执行 **`./deploy/remote.sh`**（并请求 **全部权限**）时，才有机会和你在终端里一样发布成功。
-
-项目内已写 Cursor 规则：你说 **「线上发布」** 时，AI 会按规则自动 `git push`（如有未推送提交）并运行 **`./deploy/remote.sh`**；前提仍是本机公钥已在服务器登记（见上节一次性配置）。
+项目规则与 walmart 相同：你说 **「线上发布」** 时，AI 会 `git push` 并执行**一条**与上文等价的 **`ssh -o BatchMode=yes …`**（见 `.cursor/rules/online-deploy.mdc`）。若 Agent 仍 denied，在本机 **Cursor 终端**粘贴同一条命令即可（环境与你手动操作一致）。
 
 ## 本地开发（Mac）
 
