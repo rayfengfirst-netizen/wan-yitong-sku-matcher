@@ -97,6 +97,8 @@ DEPLOY_HOST=wan-yitong-prod ./deploy/remote.sh
 
 配置完成后，在 Cursor 里让 AI 执行 **`./deploy/remote.sh`**（并请求 **全部权限**）时，才有机会和你在终端里一样发布成功。
 
+项目内已写 Cursor 规则：你说 **「线上发布」** 时，AI 会按规则自动 `git push`（如有未推送提交）并运行 **`./deploy/remote.sh`**；前提仍是本机公钥已在服务器登记（见上节一次性配置）。
+
 ## 本地开发（Mac）
 
 ```bash

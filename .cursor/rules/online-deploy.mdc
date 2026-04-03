@@ -1,0 +1,22 @@
+---
+description: 用户说「线上发布」「部署生产」「remote deploy」时执行万邑通 SKU 匹配服务发版
+alwaysApply: true
+---
+
+# 线上发布
+
+当用户要求 **线上发布** / **发布线上** / **部署生产** / **发版**（针对本仓库 `wan-yitong-sku-matcher`）时：
+
+1. **代码**：若存在未推送提交，在仓库根目录执行 `git add` / `git commit`（如有需要）后 `git push origin main`。
+2. **发布命令**：使用**全部权限**（非沙箱）在项目根执行：
+   ```bash
+   cd wan-yitong-sku-matcher && ./deploy/remote.sh
+   ```
+   工作区若已是该目录，则直接 `./deploy/remote.sh`。
+3. **若 `Permission denied (publickey)`**：先尝试（仍为本机同一用户、全部权限）：
+   ```bash
+   DEPLOY_SSH_IDENTITY="$HOME/.ssh/id_ed25519" ./deploy/remote.sh
+   ```
+   仍失败则提示用户按 `README_DEPLOY.md` 的「一次性配置」完成 **`ssh-copy-id`** 或把本机公钥加入服务器，**不要把密码交给 AI**。
+
+**重要（对用户预期）**：在终端里「登录一次」**不会**让后续 AI 自动带上会话；必须完成 **SSH 公钥认证**（服务器 `authorized_keys` 中有本机公钥），`./deploy/remote.sh` 才能无交互成功。配置好后，AI 执行该脚本与你在本机终端执行等效。
