@@ -4,10 +4,27 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>万邑通 SKU 匹配</title>
-  <link rel="stylesheet" href="/static/styles.css?v=20260331" />
+  <link rel="stylesheet" href="/static/styles.css?v=20260409" />
 </head>
 <body>
-  <main class="wrap">
+  <!-- login overlay -->
+  <div id="login-overlay" class="login-overlay">
+    <form id="login-form" class="login-box">
+      <h2>登录验证</h2>
+      <label class="login-field">
+        <span>用户名</span>
+        <input id="login-user" type="text" autocomplete="username" required />
+      </label>
+      <label class="login-field">
+        <span>密码</span>
+        <input id="login-pass" type="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit" class="btn primary" id="login-btn">登录</button>
+      <div id="login-msg" class="login-msg"></div>
+    </form>
+  </div>
+
+  <main class="wrap" id="main-content" style="display:none">
     <header class="hero">
       <h1>万邑通 SKU 匹配</h1>
       <p class="lead">
@@ -73,6 +90,6 @@
       <ul id="errors-list" class="errors-list"></ul>
     </section>
   </main>
-  <script src="/static/app.js?v=20260331" defer></script>
+  <script src="/static/app.js?v=20260409" defer></script>
 </body>
 </html>

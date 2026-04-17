@@ -286,3 +286,58 @@ input[type="file"] {
   font-weight: 600;
   margin-right: 0.35rem;
 }
+
+/* ── login overlay ── */
+.login-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.login-overlay.authed {
+  display: none;
+}
+.login-box {
+  background: var(--surface);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 2rem 2.25rem;
+  width: min(380px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.login-box h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.2rem;
+  font-weight: 600;
+  text-align: center;
+}
+.login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.login-field input {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.9rem;
+  outline: none;
+}
+.login-field input:focus {
+  border-color: var(--accent);
+}
+.login-msg {
+  font-size: 0.82rem;
+  color: var(--err);
+  min-height: 1.2em;
+  text-align: center;
+}

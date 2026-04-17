@@ -1,6 +1,59 @@
 (function () {
   const $ = (id) => document.getElementById(id);
 
+  // ── auth gate ────────────────────────────────────────────────────
+  async function checkAuth() {
+    try {
+      const r = await fetch("/api/jobs?_=" + Date.now(), { cache: "no-store" });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async function initAuth() {
+    const overlay = $("login-overlay");
+    const main = $("main-content");
+    if (await checkAuth()) {
+      overlay.classList.add("authed");
+      main.style.display = "";
+      return true;
+    }
+    overlay.classList.remove("authed");
+    main.style.display = "none";
+
+    $("login-form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const msg = $("login-msg");
+      const btn = $("login-btn");
+      msg.textContent = "";
+      btn.disabled = true;
+      try {
+        const r = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: $("login-user").value.trim(),
+            password: $("login-pass").value,
+          }),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (r.ok && data.ok) {
+          overlay.classList.add("authed");
+          main.style.display = "";
+          bootApp();
+          return;
+        }
+        msg.textContent = data.detail || "登录失败";
+      } catch (e) {
+        msg.textContent = "网络异常：" + (e.message || e);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    return false;
+  }
+
   function fmtTime(iso) {
     if (!iso) return "—";
     try {
@@ -229,5 +282,9 @@
     }
   });
 
-  loadJobs();
+  function bootApp() {
+    loadJobs();
+  }
+
+  initAuth().then((ok) => { if (ok) bootApp(); });
 })();
